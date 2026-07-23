@@ -1,0 +1,71 @@
+version: "3.9"
+
+# Local development stack. Start with:
+#   docker compose -f docker-compose.test.yml up -d
+#
+# First-run checklist:
+#   1. Open http://localhost:3001 and complete the Uptime Kuma setup wizard
+#      (create an admin account — use the KUMA_USERNAME / KUMA_PASSWORD values below).
+#   2. In your UniFi controller, tag devices with "kuma-<groupname>" (e.g. kuma-servers).
+#   3. Run `docker compose -f docker-compose.test.yml up unifi-kuma` to start the syncer.
+#      Or `docker compose -f docker-compose.test.yml logs -f unifi-kuma` to watch it.
+#
+# Override any value with a .env file in this directory (see .env.example).
+
+services:
+
+  # ── Uptime Kuma ──────────────────────────────────────────────────────────
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: unifi-kuma-test-kuma
+    ports:
+      - "3001:3001"
+    volumes:
+      - kuma-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001', r => process.exit(r.statusCode === 200 ? 0 : 1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # ── unifi-kuma (this tool, built from source) ─────────────────────────────
+  unifi-kuma:
+    build:
+      context: .
+      target: final
+      args:
+        VERSION: dev
+    container_name: unifi-kuma-dev
+    restart: unless-stopped
+    depends_on:
+      uptime-kuma:
+        condition: service_healthy
+    environment:
+      # UniFi controller — required, no sane defaults
+      UNIFI_URL:      ${UNIFI_URL:?Set UNIFI_URL in your .env file}
+      UNIFI_USERNAME: ${UNIFI_USERNAME:?Set UNIFI_USERNAME in your .env file}
+      UNIFI_PASSWORD: ${UNIFI_PASSWORD:?Set UNIFI_PASSWORD in your .env file}
+      UNIFI_SITE:     ${UNIFI_SITE:-default}
+      UNIFI_INSECURE: ${UNIFI_INSECURE:-true}   # self-signed certs are common in dev
+
+      # Uptime Kuma — points at the sibling service above
+      KUMA_URL:      http://uptime-kuma:3001
+      KUMA_USERNAME: ${KUMA_USERNAME:-admin}
+      KUMA_PASSWORD: ${KUMA_PASSWORD:?Set KUMA_PASSWORD in your .env file}
+
+      # Sync behaviour
+      SYNC_TAG_PREFIX:        ${SYNC_TAG_PREFIX:-kuma}
+      SYNC_INTERVAL_SECONDS:  ${SYNC_INTERVAL_SECONDS:-60}   # faster in dev
+      SYNC_DRY_RUN:           ${SYNC_DRY_RUN:-false}
+      SYNC_DELETE_ORPHAN:     ${SYNC_DELETE_ORPHAN:-false}
+
+      # Verbose logging in dev
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
+    command:
+      - "-log-level"
+      - "${LOG_LEVEL:-debug}"
+
+volumes:
+  kuma-data:
