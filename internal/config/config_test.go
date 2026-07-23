@@ -27,7 +27,7 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Equal(t, "mysite", cfg.UniFi.Site)
 	assert.Equal(t, "http://kuma.example.com:3001", cfg.Kuma.URL)
 	assert.Equal(t, "kuma", cfg.Sync.TagPrefix) // default
-	assert.Equal(t, 300, cfg.Sync.IntervalSecs)  // default
+	assert.Equal(t, 300, cfg.Sync.IntervalSecs) // default
 }
 
 func TestLoad_Defaults(t *testing.T) {
@@ -52,17 +52,17 @@ func TestLoad_Defaults(t *testing.T) {
 
 func TestLoad_EnvOverrides(t *testing.T) {
 	setEnv(t, map[string]string{
-		"UNIFI_URL":              "https://unifi.example.com",
-		"UNIFI_USERNAME":         "admin",
-		"UNIFI_PASSWORD":         "secret",
-		"KUMA_URL":               "http://kuma.example.com:3001",
-		"KUMA_USERNAME":          "kuma",
-		"KUMA_PASSWORD":          "kumasecret",
-		"SYNC_INTERVAL_SECONDS":  "60",
-		"SYNC_TAG_PREFIX":        "monitor",
-		"SYNC_DRY_RUN":           "true",
-		"SYNC_DELETE_ORPHAN":     "1",
-		"UNIFI_INSECURE":         "yes",
+		"UNIFI_URL":             "https://unifi.example.com",
+		"UNIFI_USERNAME":        "admin",
+		"UNIFI_PASSWORD":        "secret",
+		"KUMA_URL":              "http://kuma.example.com:3001",
+		"KUMA_USERNAME":         "kuma",
+		"KUMA_PASSWORD":         "kumasecret",
+		"SYNC_INTERVAL_SECONDS": "60",
+		"SYNC_TAG_PREFIX":       "monitor",
+		"SYNC_DRY_RUN":          "true",
+		"SYNC_DELETE_ORPHAN":    "1",
+		"UNIFI_INSECURE":        "yes",
 	})
 
 	cfg, err := Load("")

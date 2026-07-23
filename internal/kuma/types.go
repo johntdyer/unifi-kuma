@@ -24,19 +24,19 @@ const (
 
 // Monitor represents an Uptime Kuma monitor or monitor group.
 type Monitor struct {
-	ID             int         `json:"id,omitempty"`
-	Name           string      `json:"name"`
-	Type           MonitorType `json:"type"`
-	Hostname       string      `json:"hostname,omitempty"`
-	URL            string      `json:"url,omitempty"`
-	Port           int         `json:"port,omitempty"`
-	Interval       int         `json:"interval,omitempty"`
-	RetryInterval  int         `json:"retryInterval,omitempty"`
-	ResendInterval int         `json:"resendInterval,omitempty"`
-	MaxRetries     int         `json:"maxretries,omitempty"`
-	ParentID       *int        `json:"parent,omitempty"`
-	Active         bool        `json:"active"`
-	Description    string      `json:"description,omitempty"`
+	ID             int          `json:"id,omitempty"`
+	Name           string       `json:"name"`
+	Type           MonitorType  `json:"type"`
+	Hostname       string       `json:"hostname,omitempty"`
+	URL            string       `json:"url,omitempty"`
+	Port           int          `json:"port,omitempty"`
+	Interval       int          `json:"interval,omitempty"`
+	RetryInterval  int          `json:"retryInterval,omitempty"`
+	ResendInterval int          `json:"resendInterval,omitempty"`
+	MaxRetries     int          `json:"maxretries,omitempty"`
+	ParentID       *int         `json:"parent,omitempty"`
+	Active         bool         `json:"active"`
+	Description    string       `json:"description,omitempty"`
 	Tags           []MonitorTag `json:"tags,omitempty"`
 }
 

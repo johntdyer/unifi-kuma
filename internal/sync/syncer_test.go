@@ -328,8 +328,8 @@ func TestTagGroupName(t *testing.T) {
 		{"kuma-servers", "kuma", "Servers"},
 		{"kuma-home-network", "kuma", "Home Network"},   // spaces, not hyphens
 		{"kuma-access-points", "kuma", "Access Points"}, // multi-word with spaces
-		{"kuma", "kuma", "kuma"},                         // exact match, no strip
-		{"other-tag", "kuma", "other-tag"},               // no prefix match
+		{"kuma", "kuma", "kuma"},                        // exact match, no strip
+		{"other-tag", "kuma", "other-tag"},              // no prefix match
 	}
 
 	for _, tt := range tests {
