@@ -22,6 +22,7 @@ type Client struct {
 	site    string
 	http    *http.Client
 	csrf    string
+	apiKey  string
 	isUDM   bool
 	logger  *slog.Logger
 }
@@ -50,9 +51,23 @@ func NewClient(baseURL, site string, insecure bool) (*Client, error) {
 	}, nil
 }
 
+// SetAPIKey configures the client to authenticate with a static API key.
+// API keys are only supported on UniFi OS (UDM/Cloud Key); the client is
+// automatically put into UDM mode so the correct URL paths are used.
+// Call this before Start; Login becomes a no-op when set.
+func (c *Client) SetAPIKey(key string) {
+	c.apiKey = key
+	c.isUDM = true
+}
+
 // Login authenticates to the UniFi controller. It tries UniFi OS style first,
 // then falls back to the classic Network Application login.
+// If an API key was set via SetAPIKey, the HTTP call is skipped.
 func (c *Client) Login(ctx context.Context, username, password string) error {
+	if c.apiKey != "" {
+		c.logger.InfoContext(ctx, "using API key for UniFi")
+		return nil
+	}
 	body, err := json.Marshal(loginRequest{Username: username, Password: password, Remember: true})
 	if err != nil {
 		return fmt.Errorf("marshaling login request: %w", err)
@@ -310,6 +325,10 @@ func (c *Client) v1URL(path string) string {
 }
 
 func (c *Client) setHeaders(req *http.Request) {
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		return
+	}
 	if c.csrf != "" {
 		req.Header.Set("X-Csrf-Token", c.csrf)
 	}

@@ -23,6 +23,7 @@ type UniFiConfig struct {
 	URL      string `yaml:"url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+	APIKey   string `yaml:"api_key"`
 	Site     string `yaml:"site"`
 	Insecure bool   `yaml:"insecure"`
 }
@@ -32,6 +33,7 @@ type KumaConfig struct {
 	URL      string `yaml:"url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+	APIKey   string `yaml:"api_key"`
 }
 
 // SyncConfig holds sync behavior settings.
@@ -100,6 +102,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("UNIFI_INSECURE"); v != "" {
 		cfg.UniFi.Insecure = parseBool(v)
 	}
+	if v := os.Getenv("UNIFI_API_KEY"); v != "" {
+		cfg.UniFi.APIKey = v
+	}
 
 	if v := os.Getenv("KUMA_URL"); v != "" {
 		cfg.Kuma.URL = v
@@ -109,6 +114,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("KUMA_PASSWORD"); v != "" {
 		cfg.Kuma.Password = v
+	}
+	if v := os.Getenv("KUMA_API_KEY"); v != "" {
+		cfg.Kuma.APIKey = v
 	}
 
 	if v := os.Getenv("SYNC_INTERVAL_SECONDS"); v != "" {
@@ -133,30 +141,25 @@ func applyEnv(cfg *Config) {
 }
 
 // Validate returns an error if required fields are missing.
+// Each service requires either an API key OR a username+password pair.
 func (c *Config) Validate() error {
-	var missing []string
+	var errs []string
 
 	if c.UniFi.URL == "" {
-		missing = append(missing, "UNIFI_URL")
+		errs = append(errs, "UNIFI_URL")
 	}
-	if c.UniFi.Username == "" {
-		missing = append(missing, "UNIFI_USERNAME")
-	}
-	if c.UniFi.Password == "" {
-		missing = append(missing, "UNIFI_PASSWORD")
+	if c.UniFi.APIKey == "" && (c.UniFi.Username == "" || c.UniFi.Password == "") {
+		errs = append(errs, "UniFi requires UNIFI_API_KEY or both UNIFI_USERNAME and UNIFI_PASSWORD")
 	}
 	if c.Kuma.URL == "" {
-		missing = append(missing, "KUMA_URL")
+		errs = append(errs, "KUMA_URL")
 	}
-	if c.Kuma.Username == "" {
-		missing = append(missing, "KUMA_USERNAME")
-	}
-	if c.Kuma.Password == "" {
-		missing = append(missing, "KUMA_PASSWORD")
+	if c.Kuma.APIKey == "" && (c.Kuma.Username == "" || c.Kuma.Password == "") {
+		errs = append(errs, "Kuma requires KUMA_API_KEY or both KUMA_USERNAME and KUMA_PASSWORD")
 	}
 
-	if len(missing) > 0 {
-		return fmt.Errorf("missing required configuration: %s", strings.Join(missing, ", "))
+	if len(errs) > 0 {
+		return fmt.Errorf("missing required configuration: %s", strings.Join(errs, "; "))
 	}
 
 	return nil

@@ -34,8 +34,20 @@ func NewClient(baseURL string) *Client {
 	}
 }
 
+// SetAPIKey configures the client to authenticate with a static API key instead
+// of username/password. Call this before Start; Login becomes a no-op when set.
+func (c *Client) SetAPIKey(key string) {
+	c.token = key
+}
+
 // Login authenticates and stores the JWT token for subsequent requests.
+// If an API key was set via SetAPIKey, the HTTP call is skipped.
 func (c *Client) Login(ctx context.Context, username, password string) error {
+	if c.token != "" {
+		c.logger.InfoContext(ctx, "using API key for Uptime Kuma")
+		return nil
+	}
+
 	body, err := json.Marshal(loginRequest{Username: username, Password: password})
 	if err != nil {
 		return fmt.Errorf("marshaling login: %w", err)
