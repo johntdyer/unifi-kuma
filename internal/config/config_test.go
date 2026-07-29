@@ -113,10 +113,10 @@ func TestLoad_APIKeyTakesPrecedenceOverMissingPassword(t *testing.T) {
 func TestLoad_MissingAuthForUniFi(t *testing.T) {
 	// Neither API key nor username+password → validation error.
 	setEnv(t, map[string]string{
-		"UNIFI_URL":      "https://unifi.example.com",
-		"KUMA_URL":       "http://kuma.example.com:3001",
-		"KUMA_USERNAME":  "kuma",
-		"KUMA_PASSWORD":  "secret",
+		"UNIFI_URL":     "https://unifi.example.com",
+		"KUMA_URL":      "http://kuma.example.com:3001",
+		"KUMA_USERNAME": "kuma",
+		"KUMA_PASSWORD": "secret",
 	})
 
 	_, err := Load("")
