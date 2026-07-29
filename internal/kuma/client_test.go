@@ -65,6 +65,20 @@ func newKumaTestServer(t *testing.T) (*httptest.Server, *Client) {
 
 func intPtr(i int) *int { return &i }
 
+// TestSetAPIKey verifies that setting an API key makes Login a no-op that
+// skips the HTTP call entirely.
+func TestSetAPIKey(t *testing.T) {
+	_, c := newKumaTestServer(t)
+	c.token = ""
+
+	c.SetAPIKey("test-key")
+	assert.Equal(t, "test-key", c.token)
+
+	err := c.Login(context.Background(), "", "")
+	require.NoError(t, err)
+	assert.Equal(t, "test-key", c.token, "Login should skip the HTTP call and leave the API key token untouched")
+}
+
 func TestLogin_Success(t *testing.T) {
 	_, c := newKumaTestServer(t)
 	c.token = ""
