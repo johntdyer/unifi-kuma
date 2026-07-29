@@ -44,8 +44,14 @@ func main() {
 		slog.Error("failed to create UniFi client", "error", err)
 		os.Exit(1)
 	}
+	if cfg.UniFi.APIKey != "" {
+		unifiClient.SetAPIKey(cfg.UniFi.APIKey)
+	}
 
 	kumaClient := kuma.NewClient(cfg.Kuma.URL)
+	if cfg.Kuma.APIKey != "" {
+		kumaClient.SetAPIKey(cfg.Kuma.APIKey)
+	}
 
 	syncer := sync.New(cfg, unifiClient, kumaClient)
 
