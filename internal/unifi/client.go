@@ -74,15 +74,16 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	}
 
 	// Try UniFi OS (UDM) endpoint first.
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/auth/login", bytes.NewReader(body))
+	url := c.baseURL + "/api/auth/login"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("building login request: %w", err)
+		return fmt.Errorf("building login request to %s: %w", url, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending login request: %w", err)
+		return fmt.Errorf("sending login request to %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
@@ -90,7 +91,7 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 	case http.StatusOK:
 		// Guard against proxy/captive portal intercepts that return 200 with non-API bodies.
 		if len(resp.Cookies()) == 0 && resp.Header.Get("X-Csrf-Token") == "" {
-			return fmt.Errorf("UniFi OS login returned 200 but no session cookie or CSRF token — possible proxy intercept")
+			return fmt.Errorf("UniFi OS login to %s returned 200 but no session cookie or CSRF token — possible proxy intercept", url)
 		}
 		c.isUDM = true
 		if token := resp.Header.Get("X-Csrf-Token"); token != "" {
@@ -102,7 +103,7 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 		// Fall back to classic login.
 		return c.loginClassic(ctx, username, password)
 	default:
-		return fmt.Errorf("UniFi OS login returned status %d", resp.StatusCode)
+		return fmt.Errorf("UniFi OS login to %s returned status %d", url, resp.StatusCode)
 	}
 }
 
@@ -112,20 +113,21 @@ func (c *Client) loginClassic(ctx context.Context, username, password string) er
 		return fmt.Errorf("marshaling classic login request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/login", bytes.NewReader(body))
+	url := c.baseURL + "/api/login"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("building classic login request: %w", err)
+		return fmt.Errorf("building classic login request to %s: %w", url, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending classic login request: %w", err)
+		return fmt.Errorf("sending classic login request to %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("classic login returned status %d", resp.StatusCode)
+		return fmt.Errorf("classic login to %s returned status %d", url, resp.StatusCode)
 	}
 
 	c.isUDM = false
@@ -140,18 +142,18 @@ func (c *Client) GetTags(ctx context.Context) ([]Tag, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("building tags request: %w", err)
+		return nil, fmt.Errorf("building request to %s: %w", url, err)
 	}
 	c.setHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching tags: %w", err)
+		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("tags API returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GET %s returned status %d", url, resp.StatusCode)
 	}
 
 	var result struct {
@@ -336,30 +338,31 @@ func (c *Client) setHeaders(req *http.Request) {
 
 // fetchV1List performs a GET against a v1 API path and decodes the data array.
 func fetchV1List[T any](ctx context.Context, c *Client, path string) ([]T, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.v1URL(path), nil)
+	url := c.v1URL(path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, fmt.Errorf("building request for %s: %w", path, err)
+		return nil, fmt.Errorf("building request to %s: %w", url, err)
 	}
 	c.setHeaders(req)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching %s: %w", path, err)
+		return nil, fmt.Errorf("fetching %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("%s returned status %d: %s", path, resp.StatusCode, string(body))
+		return nil, fmt.Errorf("GET %s returned status %d: %s", url, resp.StatusCode, string(body))
 	}
 
 	var result apiResponse[T]
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding response for %s: %w", path, err)
+		return nil, fmt.Errorf("decoding response from %s: %w", url, err)
 	}
 
 	if result.Meta.RC != "" && result.Meta.RC != "ok" {
-		return nil, fmt.Errorf("%s API error: %s", path, result.Meta.Message)
+		return nil, fmt.Errorf("%s API error: %s", url, result.Meta.Message)
 	}
 
 	return result.Data, nil
