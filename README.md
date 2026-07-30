@@ -52,6 +52,21 @@ Uptime Kuma result
 
 ### Docker (recommended)
 
+Using API keys (no username/password needed for either service — see [Authentication](#authentication)):
+
+```bash
+docker run -d \
+  --name unifi-kuma \
+  --restart unless-stopped \
+  -e UNIFI_URL=https://192.168.1.1 \
+  -e UNIFI_API_KEY=changeme \
+  -e KUMA_URL=http://uptime-kuma:3001 \
+  -e KUMA_API_KEY=changeme \
+  ghcr.io/johntdyer/unifi-kuma:latest
+```
+
+Using username/password instead:
+
 ```bash
 docker run -d \
   --name unifi-kuma \
@@ -74,12 +89,14 @@ services:
     restart: unless-stopped
     environment:
       UNIFI_URL: https://192.168.1.1
-      UNIFI_USERNAME: admin
-      UNIFI_PASSWORD: changeme
+      UNIFI_API_KEY: changeme         # preferred — omit UNIFI_USERNAME/PASSWORD if set
+      # UNIFI_USERNAME: admin         # only needed if not using UNIFI_API_KEY
+      # UNIFI_PASSWORD: changeme      # only needed if not using UNIFI_API_KEY
       UNIFI_INSECURE: "true"          # if using self-signed cert
       KUMA_URL: http://uptime-kuma:3001
-      KUMA_USERNAME: admin
-      KUMA_PASSWORD: changeme
+      KUMA_API_KEY: changeme          # preferred — omit KUMA_USERNAME/PASSWORD if set
+      # KUMA_USERNAME: admin          # only needed if not using KUMA_API_KEY
+      # KUMA_PASSWORD: changeme       # only needed if not using KUMA_API_KEY
       SYNC_TAG_PREFIX: kuma
       SYNC_INTERVAL_SECONDS: "300"
       SYNC_DRY_RUN: "false"
@@ -101,18 +118,29 @@ make build          # binary at ./dist/unifi-kuma
 
 All settings can be provided as environment variables or via a YAML file. Environment variables take precedence over the file.
 
+### Authentication
+
+Each service accepts **either** an API key **or** a username/password pair — an API key is recommended where available since it avoids storing a password and doesn't expire on password rotation.
+
+- **UniFi**: set `UNIFI_API_KEY` (Settings → Control Plane → API Keys, requires UniFi OS 3.2+). `UNIFI_USERNAME`/`UNIFI_PASSWORD` are **not required** when an API key is set — they're only used as a fallback for older controllers that don't support API keys.
+- **Uptime Kuma**: set `KUMA_API_KEY` (Settings → API Keys, requires Kuma 1.23+). `KUMA_USERNAME`/`KUMA_PASSWORD` are **not required** when an API key is set.
+
+Validation requires, per service, either the API key **or** both username and password — you don't need to set both.
+
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `UNIFI_URL` | *(required)* | Controller base URL |
-| `UNIFI_USERNAME` | *(required)* | UniFi admin username |
-| `UNIFI_PASSWORD` | *(required)* | UniFi admin password |
+| `UNIFI_API_KEY` | *(optional)* | UniFi API key — if set, `UNIFI_USERNAME`/`UNIFI_PASSWORD` are not needed |
+| `UNIFI_USERNAME` | *(required if no API key)* | UniFi admin username |
+| `UNIFI_PASSWORD` | *(required if no API key)* | UniFi admin password |
 | `UNIFI_SITE` | `default` | UniFi site name |
 | `UNIFI_INSECURE` | `false` | Skip TLS certificate verification |
 | `KUMA_URL` | *(required)* | Uptime Kuma base URL |
-| `KUMA_USERNAME` | *(required)* | Kuma username |
-| `KUMA_PASSWORD` | *(required)* | Kuma password |
+| `KUMA_API_KEY` | *(optional)* | Kuma API key — if set, `KUMA_USERNAME`/`KUMA_PASSWORD` are not needed |
+| `KUMA_USERNAME` | *(required if no API key)* | Kuma username |
+| `KUMA_PASSWORD` | *(required if no API key)* | Kuma password |
 | `SYNC_TAG_PREFIX` | `kuma` | Prefix of UniFi tags to watch |
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
@@ -123,15 +151,17 @@ All settings can be provided as environment variables or via a YAML file. Enviro
 ```yaml
 unifi:
   url: https://192.168.1.1
-  username: admin
-  password: changeme
+  api_key: changeme     # preferred — omit username/password if set
+  # username: admin      # only needed if not using api_key
+  # password: changeme   # only needed if not using api_key
   site: default
   insecure: true
 
 kuma:
   url: http://uptime-kuma:3001
-  username: admin
-  password: changeme
+  api_key: changeme     # preferred — omit username/password if set
+  # username: admin      # only needed if not using api_key
+  # password: changeme   # only needed if not using api_key
 
 sync:
   tag_prefix: kuma
