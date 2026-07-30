@@ -66,21 +66,22 @@ func (c *Client) Login(ctx context.Context, username, password string) error {
 		return fmt.Errorf("marshaling login: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/login/access-token", bytes.NewReader(body))
+	url := c.baseURL + "/login/access-token"
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return fmt.Errorf("building login request: %w", err)
+		return fmt.Errorf("building login request to %s: %w", url, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("sending login: %w", err)
+		return fmt.Errorf("sending login request to %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("login returned status %d: %s", resp.StatusCode, string(body))
+		return fmt.Errorf("login request to %s returned status %d: %s", url, resp.StatusCode, string(body))
 	}
 
 	var lr loginResponse
@@ -106,12 +107,12 @@ func (c *Client) GetMonitors(ctx context.Context) ([]Monitor, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching monitors: %w", err)
+		return nil, fmt.Errorf("fetching %s: %w", req.URL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("get monitors returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("GET %s returned status %d", req.URL, resp.StatusCode)
 	}
 
 	var result listResponse
@@ -152,17 +153,17 @@ func (c *Client) CreateMonitor(ctx context.Context, m Monitor) (int, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("creating monitor: %w", err)
+		return 0, fmt.Errorf("POST %s: %w", req.URL, err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return 0, fmt.Errorf("reading create response: %w", err)
+		return 0, fmt.Errorf("reading response from %s: %w", req.URL, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("create monitor returned status %d: %s", resp.StatusCode, string(respBody))
+		return 0, fmt.Errorf("POST %s returned status %d: %s", req.URL, resp.StatusCode, string(respBody))
 	}
 
 	var result createResponse
@@ -187,12 +188,12 @@ func (c *Client) DeleteMonitor(ctx context.Context, id int) error {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("deleting monitor %d: %w", id, err)
+		return fmt.Errorf("DELETE %s: %w", req.URL, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("delete monitor %d returned status %d", id, resp.StatusCode)
+		return fmt.Errorf("DELETE %s returned status %d", req.URL, resp.StatusCode)
 	}
 
 	c.logger.InfoContext(ctx, "deleted monitor", "id", id)
@@ -271,9 +272,10 @@ func IsManagedMonitor(m Monitor) bool {
 }
 
 func (c *Client) newRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
+	url := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return nil, fmt.Errorf("building request %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("building request %s %s: %w", method, url, err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if c.token != "" {
