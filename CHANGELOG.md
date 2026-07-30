@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0](https://github.com/johntdyer/unifi-kuma/compare/v1.1.1...v1.2.0) (2026-07-30)
+
+
+### Features
+
+* support Uptime Kuma instances with auth disabled ([#8](https://github.com/johntdyer/unifi-kuma/issues/8)) ([6bb8aca](https://github.com/johntdyer/unifi-kuma/commit/6bb8acab5729681e13a0fbe99553c8b0474be52a))
+
 ## [1.1.1](https://github.com/johntdyer/unifi-kuma/compare/v1.1.0...v1.1.1) (2026-07-30)
 
 
