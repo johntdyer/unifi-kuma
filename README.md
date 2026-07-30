@@ -54,14 +54,15 @@ Uptime Kuma result
 
 ### Docker (recommended)
 
-Using a UniFi API key (no UniFi username/password needed — see [Authentication](#authentication)) and Kuma username/password:
+Neither UniFi nor Uptime Kuma can be authenticated with an API key for what this tool needs (see [Authentication](#authentication) for why) — both use username/password:
 
 ```bash
 docker run -d \
   --name unifi-kuma \
   --restart unless-stopped \
   -e UNIFI_URL=https://192.168.1.1 \
-  -e UNIFI_API_KEY=changeme \
+  -e UNIFI_USERNAME=unifi-kuma \
+  -e UNIFI_PASSWORD=changeme \
   -e KUMA_URL=http://uptime-kuma:3001 \
   -e KUMA_USERNAME=admin \
   -e KUMA_PASSWORD=changeme \
@@ -75,7 +76,8 @@ docker run -d \
   --name unifi-kuma \
   --restart unless-stopped \
   -e UNIFI_URL=https://192.168.1.1 \
-  -e UNIFI_API_KEY=changeme \
+  -e UNIFI_USERNAME=unifi-kuma \
+  -e UNIFI_PASSWORD=changeme \
   -e KUMA_URL=http://uptime-kuma:3001 \
   -e KUMA_DISABLE_AUTH=true \
   ghcr.io/johntdyer/unifi-kuma:latest
@@ -90,12 +92,11 @@ services:
     restart: unless-stopped
     environment:
       UNIFI_URL: https://192.168.1.1
-      UNIFI_API_KEY: changeme         # preferred — omit UNIFI_USERNAME/PASSWORD if set
-      # UNIFI_USERNAME: admin         # only needed if not using UNIFI_API_KEY
-      # UNIFI_PASSWORD: changeme      # only needed if not using UNIFI_API_KEY
+      UNIFI_USERNAME: unifi-kuma      # see "Creating a read-only UniFi user" below
+      UNIFI_PASSWORD: changeme
       UNIFI_INSECURE: "true"          # if using self-signed cert
       KUMA_URL: http://uptime-kuma:3001
-      KUMA_USERNAME: admin            # Kuma has no API-key auth for this — see Authentication
+      KUMA_USERNAME: admin
       KUMA_PASSWORD: changeme
       # KUMA_DISABLE_AUTH: "true"     # instead of username/password, if Kuma has auth disabled
       SYNC_TAG_PREFIX: kuma
@@ -121,22 +122,21 @@ All settings can be provided as environment variables or via a YAML file. Enviro
 
 ### Authentication
 
-UniFi and Uptime Kuma support different auth options, because they're different protocols under the hood — UniFi is REST (so API keys work), Kuma is Socket.IO (so only the same username+password the web UI uses works; **Kuma API keys only cover its push/badge REST endpoints, not monitor management, so they can't be used here**).
+Neither UniFi nor Uptime Kuma can be authenticated with an API key for what this tool actually needs, so both use username+password:
 
-- **UniFi**: set `UNIFI_API_KEY` (Settings → Control Plane → API Keys, requires UniFi OS 3.2+) — recommended, avoids storing a password. `UNIFI_USERNAME`/`UNIFI_PASSWORD` are **not required** when an API key is set; they're only a fallback for older controllers that don't support API keys.
-- **Uptime Kuma**: set `KUMA_USERNAME`/`KUMA_PASSWORD` — the same credentials you use to log into the Kuma web UI.
+- **UniFi**: set `UNIFI_USERNAME`/`UNIFI_PASSWORD`. UniFi API keys only work against its newer public Integrations API, which doesn't expose tags at all — the thing this tool is built around — so a real login (the same session-based auth the web UI itself uses) is the only way to read tags. See [Creating a read-only UniFi user](#creating-a-read-only-unifi-user) below for a scoped-down account instead of using your main admin login.
+- **Uptime Kuma**: set `KUMA_USERNAME`/`KUMA_PASSWORD` — the same credentials you use to log into the Kuma web UI. (Kuma API keys only cover its push/badge REST endpoints, not the Socket.IO connection this tool uses for monitor management, so they can't be used here either.)
 - **Uptime Kuma with "Disable Auth" enabled**: set `KUMA_DISABLE_AUTH=true` instead. Kuma instances with authentication disabled (Settings → Security → Disable Auth) reject any login attempt, so `KUMA_DISABLE_AUTH=true` connects without sending credentials at all. `KUMA_USERNAME`/`KUMA_PASSWORD` are not needed in this mode.
 
-Validation requires: for UniFi, either the API key or both username and password; for Kuma, either both username and password, or `KUMA_DISABLE_AUTH=true`.
+Validation requires both username and password for UniFi; for Kuma, either both username and password, or `KUMA_DISABLE_AUTH=true`.
 
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
 | `UNIFI_URL` | *(required)* | Controller base URL |
-| `UNIFI_API_KEY` | *(optional)* | UniFi API key — if set, `UNIFI_USERNAME`/`UNIFI_PASSWORD` are not needed |
-| `UNIFI_USERNAME` | *(required if no API key)* | UniFi admin username |
-| `UNIFI_PASSWORD` | *(required if no API key)* | UniFi admin password |
+| `UNIFI_USERNAME` | *(required)* | UniFi username — see [read-only user](#creating-a-read-only-unifi-user) |
+| `UNIFI_PASSWORD` | *(required)* | UniFi password |
 | `UNIFI_SITE` | `default` | UniFi site name |
 | `UNIFI_INSECURE` | `false` | Skip TLS certificate verification |
 | `KUMA_URL` | *(required)* | Uptime Kuma base URL |
@@ -153,9 +153,8 @@ Validation requires: for UniFi, either the API key or both username and password
 ```yaml
 unifi:
   url: https://192.168.1.1
-  api_key: changeme     # preferred — omit username/password if set
-  # username: admin      # only needed if not using api_key
-  # password: changeme   # only needed if not using api_key
+  username: unifi-kuma
+  password: changeme
   site: default
   insecure: true
 
@@ -173,6 +172,18 @@ sync:
 ```
 
 Pass with `-config /path/to/config.yaml`.
+
+### Creating a read-only UniFi user
+
+unifi-kuma only reads data from UniFi (tags, devices, clients) — it never changes anything on your controller — so it doesn't need a full admin account. Create a scoped-down local user instead of using your primary admin login:
+
+1. On the **UniFi OS console** (not inside the Network app itself), go to **Settings → Admins & Users**.
+2. Click **Add Admin** (or **+ Add User**) → choose to create a **local user** — look for a "restrict to local access only" option so this doesn't become a full Ubiquiti cloud (SSO) account with broader reach than your controller.
+3. Give it a username and password — these become `UNIFI_USERNAME`/`UNIFI_PASSWORD`.
+4. Under application permissions, set the **Network** application role to **View Only** (read-only). Set any other applications (Protect, Access, Talk, etc.) to **None** — unifi-kuma doesn't touch them.
+5. Save, and use these credentials in your config.
+
+> Exact menu wording varies a bit by UniFi OS/firmware version. If sync fails with a permissions error under the **View Only** role, the internal API this tool uses may require the fuller **Admin** role for the Network application specifically — this hasn't been verified against every controller version, so try that as a fallback and let us know which one your setup actually needs.
 
 ### CLI flags
 
