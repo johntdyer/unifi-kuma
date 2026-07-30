@@ -49,7 +49,9 @@ func main() {
 	}
 
 	kumaClient := kuma.NewClient(cfg.Kuma.URL)
-	if cfg.Kuma.APIKey != "" {
+	if cfg.Kuma.DisableAuth {
+		kumaClient.SetNoAuth()
+	} else if cfg.Kuma.APIKey != "" {
 		kumaClient.SetAPIKey(cfg.Kuma.APIKey)
 	}
 
