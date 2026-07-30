@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"testing"
 
@@ -28,9 +29,9 @@ func TestSetupLogger_Levels(t *testing.T) {
 			setupLogger(tt.level, false)
 
 			logger := slog.Default()
-			assert.True(t, logger.Enabled(nil, tt.want))
+			assert.True(t, logger.Enabled(context.Background(), tt.want))
 			if tt.want > slog.LevelDebug {
-				assert.False(t, logger.Enabled(nil, tt.want-1))
+				assert.False(t, logger.Enabled(context.Background(), tt.want-1))
 			}
 		})
 	}
