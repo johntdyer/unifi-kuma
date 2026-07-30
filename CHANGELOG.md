@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/johntdyer/unifi-kuma/compare/v1.1.0...v1.1.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* Update readme to show that u/p is not required when using api ke… ([#6](https://github.com/johntdyer/unifi-kuma/issues/6)) ([854aea6](https://github.com/johntdyer/unifi-kuma/commit/854aea662f5c91d13ce072ab94fda543886db023))
+
 ## [1.1.0](https://github.com/johntdyer/unifi-kuma/compare/v1.0.0...v1.1.0) (2026-07-29)
 
 
