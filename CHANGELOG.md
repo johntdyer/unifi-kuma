@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/johntdyer/unifi-kuma/compare/v1.2.2...v2.0.0) (2026-07-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace fictional Kuma REST client with a real Socket.IO client ([#16](https://github.com/johntdyer/unifi-kuma/issues/16))
+
+### Bug Fixes
+
+* replace fictional Kuma REST client with a real Socket.IO client ([#16](https://github.com/johntdyer/unifi-kuma/issues/16)) ([7f9475e](https://github.com/johntdyer/unifi-kuma/commit/7f9475e508f6d3be2cde08a47cc2d473103ab502))
+
 ## [1.2.2](https://github.com/johntdyer/unifi-kuma/compare/v1.2.1...v1.2.2) (2026-07-30)
 
 
