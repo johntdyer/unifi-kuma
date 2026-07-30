@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.2](https://github.com/johntdyer/unifi-kuma/compare/v1.2.1...v1.2.2) (2026-07-30)
+
+
+### Bug Fixes
+
+* include full request URL in error messages ([#14](https://github.com/johntdyer/unifi-kuma/issues/14)) ([d3f8a15](https://github.com/johntdyer/unifi-kuma/commit/d3f8a1565d554b5827c4231b8d12cf24f59105d3))
+
 ## [1.2.1](https://github.com/johntdyer/unifi-kuma/compare/v1.2.0...v1.2.1) (2026-07-30)
 
 
