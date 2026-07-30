@@ -79,6 +79,23 @@ func TestSetAPIKey(t *testing.T) {
 	assert.Equal(t, "test-key", c.token, "Login should skip the HTTP call and leave the API key token untouched")
 }
 
+// TestSetNoAuth verifies that Login becomes a no-op and that requests are
+// sent without an Authorization header when auth is disabled.
+func TestSetNoAuth(t *testing.T) {
+	_, c := newKumaTestServer(t)
+	c.token = ""
+
+	c.SetNoAuth()
+
+	err := c.Login(context.Background(), "", "")
+	require.NoError(t, err)
+	assert.Empty(t, c.token, "no-auth mode should never populate a token")
+
+	req, err := c.newRequest(context.Background(), http.MethodGet, "/api/v1/monitors", nil)
+	require.NoError(t, err)
+	assert.Empty(t, req.Header.Get("Authorization"))
+}
+
 func TestLogin_Success(t *testing.T) {
 	_, c := newKumaTestServer(t)
 	c.token = ""

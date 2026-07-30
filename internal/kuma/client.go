@@ -20,6 +20,7 @@ type Client struct {
 	baseURL string
 	http    *http.Client
 	token   string
+	noAuth  bool
 	logger  *slog.Logger
 }
 
@@ -40,9 +41,21 @@ func (c *Client) SetAPIKey(key string) {
 	c.token = key
 }
 
+// SetNoAuth configures the client for an Uptime Kuma instance running with
+// authentication disabled ("Disable Auth" in Settings). Login becomes a no-op
+// and requests are sent without an Authorization header.
+func (c *Client) SetNoAuth() {
+	c.noAuth = true
+}
+
 // Login authenticates and stores the JWT token for subsequent requests.
-// If an API key was set via SetAPIKey, the HTTP call is skipped.
+// If an API key was set via SetAPIKey, or the client was configured via
+// SetNoAuth, the HTTP call is skipped.
 func (c *Client) Login(ctx context.Context, username, password string) error {
+	if c.noAuth {
+		c.logger.InfoContext(ctx, "Uptime Kuma auth is disabled, skipping login")
+		return nil
+	}
 	if c.token != "" {
 		c.logger.InfoContext(ctx, "using API key for Uptime Kuma")
 		return nil

@@ -30,10 +30,11 @@ type UniFiConfig struct {
 
 // KumaConfig holds Uptime Kuma connection settings.
 type KumaConfig struct {
-	URL      string `yaml:"url"`
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	APIKey   string `yaml:"api_key"`
+	URL         string `yaml:"url"`
+	Username    string `yaml:"username"`
+	Password    string `yaml:"password"`
+	APIKey      string `yaml:"api_key"`
+	DisableAuth bool   `yaml:"disable_auth"`
 }
 
 // SyncConfig holds sync behavior settings.
@@ -118,6 +119,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("KUMA_API_KEY"); v != "" {
 		cfg.Kuma.APIKey = v
 	}
+	if v := os.Getenv("KUMA_DISABLE_AUTH"); v != "" {
+		cfg.Kuma.DisableAuth = parseBool(v)
+	}
 
 	if v := os.Getenv("SYNC_INTERVAL_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -154,8 +158,8 @@ func (c *Config) Validate() error {
 	if c.Kuma.URL == "" {
 		errs = append(errs, "KUMA_URL")
 	}
-	if c.Kuma.APIKey == "" && (c.Kuma.Username == "" || c.Kuma.Password == "") {
-		errs = append(errs, "Kuma requires KUMA_API_KEY or both KUMA_USERNAME and KUMA_PASSWORD")
+	if !c.Kuma.DisableAuth && c.Kuma.APIKey == "" && (c.Kuma.Username == "" || c.Kuma.Password == "") {
+		errs = append(errs, "Kuma requires KUMA_API_KEY, both KUMA_USERNAME and KUMA_PASSWORD, or KUMA_DISABLE_AUTH=true")
 	}
 
 	if len(errs) > 0 {

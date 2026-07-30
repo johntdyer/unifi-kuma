@@ -137,6 +137,20 @@ func TestLoad_MissingAuthForKuma(t *testing.T) {
 	assert.Contains(t, err.Error(), "Kuma")
 }
 
+func TestLoad_KumaDisableAuth(t *testing.T) {
+	// Neither API key nor username+password, but KUMA_DISABLE_AUTH=true → valid.
+	setEnv(t, map[string]string{
+		"UNIFI_URL":         "https://unifi.example.com",
+		"UNIFI_API_KEY":     "unifi-key-abc123",
+		"KUMA_URL":          "http://kuma.example.com:3001",
+		"KUMA_DISABLE_AUTH": "true",
+	})
+
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.True(t, cfg.Kuma.DisableAuth)
+}
+
 func TestLoad_YAMLFile(t *testing.T) {
 	clearEnv(t)
 
@@ -234,7 +248,7 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{
 		"UNIFI_URL", "UNIFI_USERNAME", "UNIFI_PASSWORD", "UNIFI_SITE", "UNIFI_INSECURE", "UNIFI_API_KEY",
-		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_API_KEY",
+		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_API_KEY", "KUMA_DISABLE_AUTH",
 		"SYNC_INTERVAL_SECONDS", "SYNC_TAG_PREFIX", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
 	}
 	for _, k := range keys {

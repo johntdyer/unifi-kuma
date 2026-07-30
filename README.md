@@ -65,6 +65,19 @@ docker run -d \
   ghcr.io/johntdyer/unifi-kuma:latest
 ```
 
+If your Kuma instance runs with "Disable Auth" enabled, skip Kuma credentials entirely:
+
+```bash
+docker run -d \
+  --name unifi-kuma \
+  --restart unless-stopped \
+  -e UNIFI_URL=https://192.168.1.1 \
+  -e UNIFI_API_KEY=changeme \
+  -e KUMA_URL=http://uptime-kuma:3001 \
+  -e KUMA_DISABLE_AUTH=true \
+  ghcr.io/johntdyer/unifi-kuma:latest
+```
+
 Using username/password instead:
 
 ```bash
@@ -124,8 +137,9 @@ Each service accepts **either** an API key **or** a username/password pair — a
 
 - **UniFi**: set `UNIFI_API_KEY` (Settings → Control Plane → API Keys, requires UniFi OS 3.2+). `UNIFI_USERNAME`/`UNIFI_PASSWORD` are **not required** when an API key is set — they're only used as a fallback for older controllers that don't support API keys.
 - **Uptime Kuma**: set `KUMA_API_KEY` (Settings → API Keys, requires Kuma 1.23+). `KUMA_USERNAME`/`KUMA_PASSWORD` are **not required** when an API key is set.
+- **Uptime Kuma with "Disable Auth" enabled**: set `KUMA_DISABLE_AUTH=true`. Kuma instances with authentication disabled (Settings → Security → Disable Auth) don't expose a login endpoint at all, so setting an API key or username/password there will fail with a 404 on login — `KUMA_DISABLE_AUTH=true` skips login entirely and sends requests with no `Authorization` header. `KUMA_USERNAME`/`KUMA_PASSWORD`/`KUMA_API_KEY` are not needed in this mode.
 
-Validation requires, per service, either the API key **or** both username and password — you don't need to set both.
+Validation requires, per service, either the API key, both username and password, **or** (Kuma only) `KUMA_DISABLE_AUTH=true`.
 
 ### Environment variables
 
@@ -139,8 +153,9 @@ Validation requires, per service, either the API key **or** both username and pa
 | `UNIFI_INSECURE` | `false` | Skip TLS certificate verification |
 | `KUMA_URL` | *(required)* | Uptime Kuma base URL |
 | `KUMA_API_KEY` | *(optional)* | Kuma API key — if set, `KUMA_USERNAME`/`KUMA_PASSWORD` are not needed |
-| `KUMA_USERNAME` | *(required if no API key)* | Kuma username |
-| `KUMA_PASSWORD` | *(required if no API key)* | Kuma password |
+| `KUMA_USERNAME` | *(required if no API key/no-auth)* | Kuma username |
+| `KUMA_PASSWORD` | *(required if no API key/no-auth)* | Kuma password |
+| `KUMA_DISABLE_AUTH` | `false` | Skip Kuma login entirely, for instances with "Disable Auth" enabled |
 | `SYNC_TAG_PREFIX` | `kuma` | Prefix of UniFi tags to watch |
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
@@ -160,8 +175,9 @@ unifi:
 kuma:
   url: http://uptime-kuma:3001
   api_key: changeme     # preferred — omit username/password if set
-  # username: admin      # only needed if not using api_key
-  # password: changeme   # only needed if not using api_key
+  # username: admin      # only needed if not using api_key or disable_auth
+  # password: changeme   # only needed if not using api_key or disable_auth
+  # disable_auth: true   # for Kuma instances with "Disable Auth" enabled — omit api_key/username/password if set
 
 sync:
   tag_prefix: kuma
