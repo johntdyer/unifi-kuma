@@ -1,5 +1,16 @@
 # Changelog
 
+## [3.0.0](https://github.com/johntdyer/unifi-kuma/compare/v2.0.0...v3.0.0) (2026-07-30)
+
+
+### ⚠ BREAKING CHANGES
+
+* remove UniFi API key auth, username+password only ([#18](https://github.com/johntdyer/unifi-kuma/issues/18))
+
+### Bug Fixes
+
+* remove UniFi API key auth, username+password only ([#18](https://github.com/johntdyer/unifi-kuma/issues/18)) ([c3dfc84](https://github.com/johntdyer/unifi-kuma/commit/c3dfc84df94b9c5a56672528259c1fd7fb1ee8ba))
+
 ## [2.0.0](https://github.com/johntdyer/unifi-kuma/compare/v1.2.2...v2.0.0) (2026-07-30)
 
 
