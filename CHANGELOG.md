@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/johntdyer/unifi-kuma/compare/v1.2.0...v1.2.1) (2026-07-30)
+
+
+### Bug Fixes
+
+* Update readme ([#12](https://github.com/johntdyer/unifi-kuma/issues/12)) ([dc9b56d](https://github.com/johntdyer/unifi-kuma/commit/dc9b56dd71d63153a4bd90b43919761e90dd7e46))
+
 ## [1.2.0](https://github.com/johntdyer/unifi-kuma/compare/v1.1.1...v1.2.0) (2026-07-30)
 
 
