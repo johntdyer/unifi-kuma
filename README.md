@@ -3,7 +3,7 @@
 [![CI](https://github.com/johntdyer/unifi-kuma/actions/workflows/test.yml/badge.svg)](https://github.com/johntdyer/unifi-kuma/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/johntdyer/unifi-kuma/graph/badge.svg)](https://codecov.io/gh/johntdyer/unifi-kuma)
 [![Go Report Card](https://goreportcard.com/badge/github.com/johntdyer/unifi-kuma)](https://goreportcard.com/report/github.com/johntdyer/unifi-kuma)
-[![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://golang.org/)
+[![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Automatically create and manage [Uptime Kuma](https://github.com/louislam/uptime-kuma) monitors from [UniFi](https://ui.com/) network tags! 
@@ -19,8 +19,10 @@ Inspired by [autokuma](https://github.com/BigBoot/AutoKuma), but source-of-truth
 | Component | Minimum version |
 |-----------|----------------|
 | UniFi OS / Network Application | 3.x / 8.x (tag API required) |
-| Uptime Kuma | 1.23 (REST API required) |
-| Go (to build from source) | 1.22 |
+| Uptime Kuma | any recent version |
+| Go (to build from source) | 1.25 |
+
+> Uptime Kuma has no REST API for managing monitors — the web UI (and this tool) talks to it over Socket.IO. unifi-kuma connects the same way, via [`github.com/breml/go-uptime-kuma-client`](https://github.com/breml/go-uptime-kuma-client).
 
 ---
 
@@ -52,7 +54,7 @@ Uptime Kuma result
 
 ### Docker (recommended)
 
-Using API keys (no username/password needed for either service — see [Authentication](#authentication)):
+Using a UniFi API key (no UniFi username/password needed — see [Authentication](#authentication)) and Kuma username/password:
 
 ```bash
 docker run -d \
@@ -61,7 +63,8 @@ docker run -d \
   -e UNIFI_URL=https://192.168.1.1 \
   -e UNIFI_API_KEY=changeme \
   -e KUMA_URL=http://uptime-kuma:3001 \
-  -e KUMA_API_KEY=changeme \
+  -e KUMA_USERNAME=admin \
+  -e KUMA_PASSWORD=changeme \
   ghcr.io/johntdyer/unifi-kuma:latest
 ```
 
@@ -75,21 +78,6 @@ docker run -d \
   -e UNIFI_API_KEY=changeme \
   -e KUMA_URL=http://uptime-kuma:3001 \
   -e KUMA_DISABLE_AUTH=true \
-  ghcr.io/johntdyer/unifi-kuma:latest
-```
-
-Using username/password instead:
-
-```bash
-docker run -d \
-  --name unifi-kuma \
-  --restart unless-stopped \
-  -e UNIFI_URL=https://192.168.1.1 \
-  -e UNIFI_USERNAME=admin \
-  -e UNIFI_PASSWORD=changeme \
-  -e KUMA_URL=http://uptime-kuma:3001 \
-  -e KUMA_USERNAME=admin \
-  -e KUMA_PASSWORD=changeme \
   ghcr.io/johntdyer/unifi-kuma:latest
 ```
 
@@ -107,9 +95,9 @@ services:
       # UNIFI_PASSWORD: changeme      # only needed if not using UNIFI_API_KEY
       UNIFI_INSECURE: "true"          # if using self-signed cert
       KUMA_URL: http://uptime-kuma:3001
-      KUMA_API_KEY: changeme          # preferred — omit KUMA_USERNAME/PASSWORD if set
-      # KUMA_USERNAME: admin          # only needed if not using KUMA_API_KEY
-      # KUMA_PASSWORD: changeme       # only needed if not using KUMA_API_KEY
+      KUMA_USERNAME: admin            # Kuma has no API-key auth for this — see Authentication
+      KUMA_PASSWORD: changeme
+      # KUMA_DISABLE_AUTH: "true"     # instead of username/password, if Kuma has auth disabled
       SYNC_TAG_PREFIX: kuma
       SYNC_INTERVAL_SECONDS: "300"
       SYNC_DRY_RUN: "false"
@@ -133,13 +121,13 @@ All settings can be provided as environment variables or via a YAML file. Enviro
 
 ### Authentication
 
-Each service accepts **either** an API key **or** a username/password pair — an API key is recommended where available since it avoids storing a password and doesn't expire on password rotation.
+UniFi and Uptime Kuma support different auth options, because they're different protocols under the hood — UniFi is REST (so API keys work), Kuma is Socket.IO (so only the same username+password the web UI uses works; **Kuma API keys only cover its push/badge REST endpoints, not monitor management, so they can't be used here**).
 
-- **UniFi**: set `UNIFI_API_KEY` (Settings → Control Plane → API Keys, requires UniFi OS 3.2+). `UNIFI_USERNAME`/`UNIFI_PASSWORD` are **not required** when an API key is set — they're only used as a fallback for older controllers that don't support API keys.
-- **Uptime Kuma**: set `KUMA_API_KEY` (Settings → API Keys, requires Kuma 1.23+). `KUMA_USERNAME`/`KUMA_PASSWORD` are **not required** when an API key is set.
-- **Uptime Kuma with "Disable Auth" enabled**: set `KUMA_DISABLE_AUTH=true`. Kuma instances with authentication disabled (Settings → Security → Disable Auth) don't expose a login endpoint at all, so setting an API key or username/password there will fail with a 404 on login — `KUMA_DISABLE_AUTH=true` skips login entirely and sends requests with no `Authorization` header. `KUMA_USERNAME`/`KUMA_PASSWORD`/`KUMA_API_KEY` are not needed in this mode.
+- **UniFi**: set `UNIFI_API_KEY` (Settings → Control Plane → API Keys, requires UniFi OS 3.2+) — recommended, avoids storing a password. `UNIFI_USERNAME`/`UNIFI_PASSWORD` are **not required** when an API key is set; they're only a fallback for older controllers that don't support API keys.
+- **Uptime Kuma**: set `KUMA_USERNAME`/`KUMA_PASSWORD` — the same credentials you use to log into the Kuma web UI.
+- **Uptime Kuma with "Disable Auth" enabled**: set `KUMA_DISABLE_AUTH=true` instead. Kuma instances with authentication disabled (Settings → Security → Disable Auth) reject any login attempt, so `KUMA_DISABLE_AUTH=true` connects without sending credentials at all. `KUMA_USERNAME`/`KUMA_PASSWORD` are not needed in this mode.
 
-Validation requires, per service, either the API key, both username and password, **or** (Kuma only) `KUMA_DISABLE_AUTH=true`.
+Validation requires: for UniFi, either the API key or both username and password; for Kuma, either both username and password, or `KUMA_DISABLE_AUTH=true`.
 
 ### Environment variables
 
@@ -152,10 +140,9 @@ Validation requires, per service, either the API key, both username and password
 | `UNIFI_SITE` | `default` | UniFi site name |
 | `UNIFI_INSECURE` | `false` | Skip TLS certificate verification |
 | `KUMA_URL` | *(required)* | Uptime Kuma base URL |
-| `KUMA_API_KEY` | *(optional)* | Kuma API key — if set, `KUMA_USERNAME`/`KUMA_PASSWORD` are not needed |
-| `KUMA_USERNAME` | *(required if no API key/no-auth)* | Kuma username |
-| `KUMA_PASSWORD` | *(required if no API key/no-auth)* | Kuma password |
-| `KUMA_DISABLE_AUTH` | `false` | Skip Kuma login entirely, for instances with "Disable Auth" enabled |
+| `KUMA_USERNAME` | *(required if no no-auth)* | Kuma username |
+| `KUMA_PASSWORD` | *(required if no no-auth)* | Kuma password |
+| `KUMA_DISABLE_AUTH` | `false` | Connect without credentials, for instances with "Disable Auth" enabled |
 | `SYNC_TAG_PREFIX` | `kuma` | Prefix of UniFi tags to watch |
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
@@ -174,10 +161,9 @@ unifi:
 
 kuma:
   url: http://uptime-kuma:3001
-  api_key: changeme     # preferred — omit username/password if set
-  # username: admin      # only needed if not using api_key or disable_auth
-  # password: changeme   # only needed if not using api_key or disable_auth
-  # disable_auth: true   # for Kuma instances with "Disable Auth" enabled — omit api_key/username/password if set
+  username: admin
+  password: changeme
+  # disable_auth: true   # instead of username/password, if Kuma has auth disabled
 
 sync:
   tag_prefix: kuma
@@ -238,7 +224,7 @@ make help
 
 | Trigger | Action |
 |---|---|
-| Pull request | Run tests on Go 1.22 & 1.23, lint, build |
+| Pull request | Run tests on Go 1.25, lint, build |
 | Push / merge to `main` | Build multi-arch Docker image, push to GHCR as `latest` |
 | Push a `v*` tag | Same, plus publish versioned tags (`v1.2.3`, `v1.2`, `v1`) |
 

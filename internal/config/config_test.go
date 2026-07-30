@@ -83,27 +83,28 @@ func TestLoad_MissingRequired(t *testing.T) {
 	assert.Contains(t, err.Error(), "UNIFI_URL")
 }
 
-func TestLoad_APIKeyAuth(t *testing.T) {
+func TestLoad_UniFiAPIKeyAuth(t *testing.T) {
 	setEnv(t, map[string]string{
 		"UNIFI_URL":     "https://unifi.example.com",
 		"UNIFI_API_KEY": "unifi-key-abc123",
 		"KUMA_URL":      "http://kuma.example.com:3001",
-		"KUMA_API_KEY":  "kuma-key-xyz789",
+		"KUMA_USERNAME": "kuma",
+		"KUMA_PASSWORD": "kumasecret",
 	})
 
 	cfg, err := Load("")
 	require.NoError(t, err)
 	assert.Equal(t, "unifi-key-abc123", cfg.UniFi.APIKey)
-	assert.Equal(t, "kuma-key-xyz789", cfg.Kuma.APIKey)
 }
 
-func TestLoad_APIKeyTakesPrecedenceOverMissingPassword(t *testing.T) {
-	// API key alone is sufficient — no username/password needed.
+func TestLoad_UniFiAPIKeyTakesPrecedenceOverMissingPassword(t *testing.T) {
+	// UniFi API key alone is sufficient — no UniFi username/password needed.
 	setEnv(t, map[string]string{
 		"UNIFI_URL":     "https://unifi.example.com",
 		"UNIFI_API_KEY": "unifi-key-abc123",
 		"KUMA_URL":      "http://kuma.example.com:3001",
-		"KUMA_API_KEY":  "kuma-key-xyz789",
+		"KUMA_USERNAME": "kuma",
+		"KUMA_PASSWORD": "kumasecret",
 	})
 
 	_, err := Load("")
@@ -248,7 +249,7 @@ func clearEnv(t *testing.T) {
 	t.Helper()
 	keys := []string{
 		"UNIFI_URL", "UNIFI_USERNAME", "UNIFI_PASSWORD", "UNIFI_SITE", "UNIFI_INSECURE", "UNIFI_API_KEY",
-		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_API_KEY", "KUMA_DISABLE_AUTH",
+		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_DISABLE_AUTH",
 		"SYNC_INTERVAL_SECONDS", "SYNC_TAG_PREFIX", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
 	}
 	for _, k := range keys {

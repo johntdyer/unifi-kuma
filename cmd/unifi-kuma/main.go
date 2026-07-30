@@ -51,9 +51,12 @@ func main() {
 	kumaClient := kuma.NewClient(cfg.Kuma.URL)
 	if cfg.Kuma.DisableAuth {
 		kumaClient.SetNoAuth()
-	} else if cfg.Kuma.APIKey != "" {
-		kumaClient.SetAPIKey(cfg.Kuma.APIKey)
 	}
+	defer func() {
+		if err := kumaClient.Close(); err != nil {
+			slog.Error("failed to close Kuma connection", "error", err)
+		}
+	}()
 
 	syncer := sync.New(cfg, unifiClient, kumaClient)
 
