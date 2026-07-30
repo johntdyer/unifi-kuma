@@ -18,12 +18,15 @@ type Config struct {
 	Sync  SyncConfig  `yaml:"sync"`
 }
 
-// UniFiConfig holds UniFi controller connection settings.
+// UniFiConfig holds UniFi controller connection settings. UniFi API keys are
+// not supported: they only work against UniFi's newer public Integrations
+// API, which doesn't expose tags — the thing this tool is built around — so
+// username+password (the same session-based auth the web UI itself uses) is
+// the only viable auth here.
 type UniFiConfig struct {
 	URL      string `yaml:"url"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
-	APIKey   string `yaml:"api_key"`
 	Site     string `yaml:"site"`
 	Insecure bool   `yaml:"insecure"`
 }
@@ -105,9 +108,6 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("UNIFI_INSECURE"); v != "" {
 		cfg.UniFi.Insecure = parseBool(v)
 	}
-	if v := os.Getenv("UNIFI_API_KEY"); v != "" {
-		cfg.UniFi.APIKey = v
-	}
 
 	if v := os.Getenv("KUMA_URL"); v != "" {
 		cfg.Kuma.URL = v
@@ -143,17 +143,17 @@ func applyEnv(cfg *Config) {
 	}
 }
 
-// Validate returns an error if required fields are missing. UniFi requires
-// either an API key or a username+password pair; Kuma requires a
-// username+password pair unless DisableAuth is set.
+// Validate returns an error if required fields are missing. Both UniFi and
+// Kuma require a username+password pair; Kuma alone also accepts
+// DisableAuth in place of credentials.
 func (c *Config) Validate() error {
 	var errs []string
 
 	if c.UniFi.URL == "" {
 		errs = append(errs, "UNIFI_URL")
 	}
-	if c.UniFi.APIKey == "" && (c.UniFi.Username == "" || c.UniFi.Password == "") {
-		errs = append(errs, "UniFi requires UNIFI_API_KEY or both UNIFI_USERNAME and UNIFI_PASSWORD")
+	if c.UniFi.Username == "" || c.UniFi.Password == "" {
+		errs = append(errs, "UniFi requires both UNIFI_USERNAME and UNIFI_PASSWORD")
 	}
 	if c.Kuma.URL == "" {
 		errs = append(errs, "KUMA_URL")

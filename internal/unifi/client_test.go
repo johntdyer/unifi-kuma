@@ -97,21 +97,6 @@ func (ts *testServer) client(t *testing.T) *Client {
 	return c
 }
 
-// TestSetAPIKey verifies that setting an API key puts the client into UDM
-// mode and that Login becomes a no-op, skipping the HTTP call entirely.
-func TestSetAPIKey(t *testing.T) {
-	ts := newTestServer(t, true)
-	c := ts.client(t)
-	c.isUDM = false
-
-	c.SetAPIKey("test-key")
-	assert.True(t, c.isUDM)
-
-	err := c.Login(context.Background(), "", "")
-	require.NoError(t, err)
-	assert.Empty(t, c.csrf, "Login should skip the HTTP call and never set csrf when using an API key")
-}
-
 // TestLogin_UDM verifies that UDM-style login sets the CSRF token.
 func TestLogin_UDM(t *testing.T) {
 	ts := newTestServer(t, true)
