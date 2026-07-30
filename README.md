@@ -6,7 +6,7 @@
 [![Go 1.22+](https://img.shields.io/badge/Go-1.22+-00ADD8?logo=go)](https://golang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Automatically create and manage [Uptime Kuma](https://github.com/louislam/uptime-kuma) monitors from [UniFi](https://ui.com/) network tags.
+Automatically create and manage [Uptime Kuma](https://github.com/louislam/uptime-kuma) monitors from [UniFi](https://ui.com/) network tags! 
 
 Tag a device or client in the UniFi UI with `kuma-servers` and unifi-kuma will create a ping monitor for it inside a **Servers** group in Uptime Kuma — and keep everything in sync on a configurable interval.
 
