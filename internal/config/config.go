@@ -28,12 +28,14 @@ type UniFiConfig struct {
 	Insecure bool   `yaml:"insecure"`
 }
 
-// KumaConfig holds Uptime Kuma connection settings.
+// KumaConfig holds Uptime Kuma connection settings. Uptime Kuma has no
+// API-key auth for the Socket.IO control plane this tool uses (API keys
+// only cover its push/badge REST endpoints), so username+password or
+// DisableAuth are the only supported options.
 type KumaConfig struct {
 	URL         string `yaml:"url"`
 	Username    string `yaml:"username"`
 	Password    string `yaml:"password"`
-	APIKey      string `yaml:"api_key"`
 	DisableAuth bool   `yaml:"disable_auth"`
 }
 
@@ -116,9 +118,6 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("KUMA_PASSWORD"); v != "" {
 		cfg.Kuma.Password = v
 	}
-	if v := os.Getenv("KUMA_API_KEY"); v != "" {
-		cfg.Kuma.APIKey = v
-	}
 	if v := os.Getenv("KUMA_DISABLE_AUTH"); v != "" {
 		cfg.Kuma.DisableAuth = parseBool(v)
 	}
@@ -144,8 +143,9 @@ func applyEnv(cfg *Config) {
 	}
 }
 
-// Validate returns an error if required fields are missing.
-// Each service requires either an API key OR a username+password pair.
+// Validate returns an error if required fields are missing. UniFi requires
+// either an API key or a username+password pair; Kuma requires a
+// username+password pair unless DisableAuth is set.
 func (c *Config) Validate() error {
 	var errs []string
 
@@ -158,8 +158,8 @@ func (c *Config) Validate() error {
 	if c.Kuma.URL == "" {
 		errs = append(errs, "KUMA_URL")
 	}
-	if !c.Kuma.DisableAuth && c.Kuma.APIKey == "" && (c.Kuma.Username == "" || c.Kuma.Password == "") {
-		errs = append(errs, "Kuma requires KUMA_API_KEY, both KUMA_USERNAME and KUMA_PASSWORD, or KUMA_DISABLE_AUTH=true")
+	if !c.Kuma.DisableAuth && (c.Kuma.Username == "" || c.Kuma.Password == "") {
+		errs = append(errs, "Kuma requires both KUMA_USERNAME and KUMA_PASSWORD, or KUMA_DISABLE_AUTH=true")
 	}
 
 	if len(errs) > 0 {
