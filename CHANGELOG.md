@@ -1,5 +1,17 @@
 # Changelog
 
+## [4.1.0](https://github.com/johntdyer/unifi-kuma/compare/v4.0.2...v4.1.0) (2026-07-31)
+
+
+### Features
+
+* require a prefix for Kuma-destination UniFi groups ([#27](https://github.com/johntdyer/unifi-kuma/issues/27)) ([d5fa30b](https://github.com/johntdyer/unifi-kuma/commit/d5fa30bf1f7359f250aed8d9acd2189b72446909))
+
+
+### Bug Fixes
+
+* set a non-null timeout on ping monitors ([#26](https://github.com/johntdyer/unifi-kuma/issues/26)) ([ecc6302](https://github.com/johntdyer/unifi-kuma/commit/ecc6302b73eede80ea9ffb454a208f369d9cdb84))
+
 ## [4.0.2](https://github.com/johntdyer/unifi-kuma/compare/v4.0.1...v4.0.2) (2026-07-31)
 
 
