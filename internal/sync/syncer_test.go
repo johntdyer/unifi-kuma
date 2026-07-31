@@ -362,6 +362,29 @@ func TestDisplayGroupName(t *testing.T) {
 	}
 }
 
+// TestSyncOnce_NoDuplicateMonitorForRepeatedDevice guards against a real
+// bug: monitors created earlier in the same sync cycle must be visible to
+// later duplicate checks in that same cycle, not just on the next cycle.
+// Simulates an upstream duplicate (e.g. the same device listed twice for a
+// group) by returning the same device twice in one group's device list —
+// only one monitor should be created for it.
+func TestSyncOnce_NoDuplicateMonitorForRepeatedDevice(t *testing.T) {
+	dev := unifi.MonitorableDevice{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"}
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {dev, dev},
+		},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	devs := k.createdDeviceMonitors()
+	require.Len(t, devs, 1, "the second identical device entry should be recognized as already synced, not duplicated")
+}
+
 func TestSyncOnce_HumanizeGroupNamesDisabled(t *testing.T) {
 	u := &mockUniFi{
 		deviceGroups: map[string][]unifi.MonitorableDevice{

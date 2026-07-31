@@ -183,7 +183,10 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 
 	var flagGroup *Group
 	// Index: member MAC -> names of the Kuma-destination groups it belongs to.
-	memberGroups := make(map[string][]string)
+	// Deduplicated per MAC so a stray duplicate entry in a UniFi group's
+	// member list (or two prefixed groups resolving to the same name) can't
+	// produce a duplicate Kuma monitor.
+	memberGroups := make(map[string]map[string]struct{})
 	for _, g := range groups {
 		if strings.EqualFold(g.Name, monitorGroup) {
 			gg := g
@@ -196,7 +199,10 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 		kumaGroupName := g.Name[len(prefixDash):]
 		for _, mac := range g.Members {
 			key := normalizeMAC(mac)
-			memberGroups[key] = append(memberGroups[key], kumaGroupName)
+			if memberGroups[key] == nil {
+				memberGroups[key] = make(map[string]struct{})
+			}
+			memberGroups[key][kumaGroupName] = struct{}{}
 		}
 	}
 
@@ -228,8 +234,13 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 	const ungrouped = "Ungrouped"
 
 	result := make(map[string][]MonitorableDevice)
+	seen := make(map[string]struct{}, len(flagGroup.Members))
 	for _, mac := range flagGroup.Members {
 		key := normalizeMAC(mac)
+		if _, dup := seen[key]; dup {
+			continue // duplicate entry in the group's own member list
+		}
+		seen[key] = struct{}{}
 
 		name, hostname, ok := resolveMember(key, deviceByMAC, clientByMAC)
 		if !ok {
@@ -242,10 +253,10 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 
 		groupNames := memberGroups[key]
 		if len(groupNames) == 0 {
-			groupNames = []string{ungrouped}
+			groupNames = map[string]struct{}{ungrouped: {}}
 		}
 
-		for _, gn := range groupNames {
+		for gn := range groupNames {
 			result[gn] = append(result[gn], MonitorableDevice{
 				GroupName: gn,
 				Name:      name,
