@@ -34,6 +34,7 @@ UniFi's **Groups** feature (Clients/Devices → Groups in the UI) lets you build
 2. For each member of that group, it checks which *other* UniFi group(s) that member also belongs to whose name starts with `SYNC_GROUP_PREFIX` (default: `kuma-group`, so e.g. `kuma-group-servers`) — that determines which Kuma group its monitor lands in (the prefix is stripped: `kuma-group-servers` → **Servers**). Groups without that prefix are ignored for this purpose, even if the device is a member. A member of `monitor` with no matching prefixed group lands under **Ungrouped**. A member of more than one matching group gets a monitor created under each one.
 3. For every monitorable device/client it creates a **ping monitor** inside the matching Kuma group — using the device's management IP.
 4. Monitors created by this tool are labelled `unifi-kuma` so they can be tracked for optional orphan deletion.
+5. If a device that was previously **Ungrouped** later gains a matching prefixed group, its stale Ungrouped monitor is removed automatically on the next sync — this always happens, independent of `SYNC_DELETE_ORPHAN`, since it's just cleaning up the same device's own outdated placement.
 
 Kuma group names are title-cased by default (`kuma-group-servers` → **Servers**); set `SYNC_HUMANIZE_GROUP_NAMES=false` to use the raw suffix verbatim instead (`servers`).
 

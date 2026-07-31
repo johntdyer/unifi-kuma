@@ -174,7 +174,7 @@ func (s *Syncer) syncGroup(
 	}
 
 	for _, device := range devices {
-		if err := s.syncDevice(ctx, device, groupID, displayName, monitors); err != nil {
+		if err := s.syncDevice(ctx, device, groupID, displayName, groupsByName, monitors); err != nil {
 			s.logger.ErrorContext(ctx, "failed to sync device",
 				"device", device.Name,
 				"group", sourceName,
@@ -217,13 +217,25 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 	return id, nil
 }
 
-// syncDevice creates a Kuma ping monitor for a device if one doesn't already exist.
-// It uses the pre-fetched monitor list instead of making an additional API call.
+// ungroupedGroupName is the Kuma group devices land in when they're
+// monitored but don't match any {groupPrefix}-{name} UniFi group. It's
+// never affected by SYNC_HUMANIZE_GROUP_NAMES since it doesn't come from a
+// UniFi group name in the first place.
+const ungroupedGroupName = "Ungrouped"
+
+// syncDevice creates a Kuma ping monitor for a device if one doesn't already
+// exist. It uses the pre-fetched monitor list instead of making an
+// additional API call. If the device now belongs to a real (non-Ungrouped)
+// group, any stale monitor left over under "Ungrouped" from before it had a
+// matching group is removed — this runs regardless of SYNC_DELETE_ORPHAN,
+// since it's a narrow, obviously-safe cleanup of the same device's own
+// previous placement rather than a general orphan sweep.
 func (s *Syncer) syncDevice(
 	ctx context.Context,
 	device unifi.MonitorableDevice,
 	groupID int,
 	groupName string,
+	groupsByName map[string]int,
 	monitors *[]kuma.Monitor,
 ) error {
 	if device.Hostname == "" {
@@ -250,36 +262,81 @@ func (s *Syncer) syncDevice(
 			"device", device.Name,
 			"monitor_id", existing.ID,
 		)
-		return nil
+	} else {
+		monitor := kuma.Monitor{
+			Type:          kuma.MonitorTypePing,
+			Name:          device.Name,
+			Hostname:      device.Hostname,
+			Interval:      60,
+			RetryInterval: 60,
+			MaxRetries:    3,
+			ParentID:      &groupID,
+			Active:        true,
+			Description:   fmt.Sprintf("managed by unifi-kuma | mac:%s", device.MAC),
+			Tags:          []kuma.MonitorTag{kuma.ManagedLabel()},
+		}
+
+		id, err := s.kuma.CreateMonitor(ctx, monitor)
+		if err != nil {
+			return fmt.Errorf("creating monitor for %s: %w", device.Name, err)
+		}
+
+		monitor.ID = id
+		*monitors = append(*monitors, monitor)
+
+		s.logger.InfoContext(ctx, "created monitor",
+			"device", device.Name,
+			"monitor_id", id,
+			"group", groupName,
+		)
 	}
 
-	monitor := kuma.Monitor{
-		Type:          kuma.MonitorTypePing,
-		Name:          device.Name,
-		Hostname:      device.Hostname,
-		Interval:      60,
-		RetryInterval: 60,
-		MaxRetries:    3,
-		ParentID:      &groupID,
-		Active:        true,
-		Description:   fmt.Sprintf("managed by unifi-kuma | mac:%s", device.MAC),
-		Tags:          []kuma.MonitorTag{kuma.ManagedLabel()},
+	if groupName != ungroupedGroupName {
+		s.removeFromUngrouped(ctx, device.Name, groupsByName, monitors)
 	}
 
-	id, err := s.kuma.CreateMonitor(ctx, monitor)
-	if err != nil {
-		return fmt.Errorf("creating monitor for %s: %w", device.Name, err)
-	}
-
-	monitor.ID = id
-	*monitors = append(*monitors, monitor)
-
-	s.logger.InfoContext(ctx, "created monitor",
-		"device", device.Name,
-		"monitor_id", id,
-		"group", groupName,
-	)
 	return nil
+}
+
+// removeFromUngrouped deletes a device's monitor under the "Ungrouped" Kuma
+// group, if one exists. Called once a device has been placed in a real
+// group, so it doesn't end up listed under both.
+func (s *Syncer) removeFromUngrouped(ctx context.Context, deviceName string, groupsByName map[string]int, monitors *[]kuma.Monitor) {
+	ungroupedID, ok := groupsByName[ungroupedGroupName]
+	if !ok {
+		return
+	}
+
+	stale := findMonitorInList(*monitors, deviceName, ungroupedID)
+	if stale == nil {
+		return
+	}
+
+	s.logger.InfoContext(ctx, "removing stale Ungrouped monitor now that device has a real group",
+		"device", deviceName,
+		"monitor_id", stale.ID,
+	)
+
+	if err := s.kuma.DeleteMonitor(ctx, stale.ID); err != nil {
+		s.logger.ErrorContext(ctx, "failed to remove stale Ungrouped monitor",
+			"device", deviceName,
+			"monitor_id", stale.ID,
+			"error", err,
+		)
+		return
+	}
+
+	*monitors = removeMonitorByID(*monitors, stale.ID)
+}
+
+// removeMonitorByID returns monitors with the entry matching id removed.
+func removeMonitorByID(monitors []kuma.Monitor, id int) []kuma.Monitor {
+	for i, m := range monitors {
+		if m.ID == id {
+			return append(monitors[:i], monitors[i+1:]...)
+		}
+	}
+	return monitors
 }
 
 // findMonitorInList returns the first monitor in the list whose name and parent

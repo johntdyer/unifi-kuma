@@ -385,6 +385,81 @@ func TestSyncOnce_NoDuplicateMonitorForRepeatedDevice(t *testing.T) {
 	require.Len(t, devs, 1, "the second identical device entry should be recognized as already synced, not duplicated")
 }
 
+// TestSyncOnce_RemovesStaleUngroupedMonitor verifies that once a device
+// gains a real (non-Ungrouped) group, its old monitor under "Ungrouped" —
+// left over from before it had any kuma-group-* membership — is removed,
+// even though SYNC_DELETE_ORPHAN is off (the default).
+func TestSyncOnce_RemovesStaleUngroupedMonitor(t *testing.T) {
+	ungroupedGroup := kuma.Monitor{ID: 1, Name: ungroupedGroupName, Type: kuma.MonitorTypeGroup, Active: true}
+	staleMonitor := kuma.Monitor{
+		ID: 2, Name: "gateway", Type: kuma.MonitorTypePing,
+		Hostname: "192.168.1.1", ParentID: intPtr(1), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{ungroupedGroup, staleMonitor}
+	cfg := defaultCfg()
+	cfg.Sync.DeleteOrphan = false // explicit: this cleanup must not depend on it
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, k.deletedIDs, 2, "stale Ungrouped monitor should be removed")
+	devs := k.createdDeviceMonitors()
+	require.Len(t, devs, 1)
+	assert.Equal(t, "gateway", devs[0].Name)
+}
+
+// TestSyncOnce_NoUngroupedCleanupWithoutStaleMonitor verifies syncing a
+// device into a real group doesn't error or call DeleteMonitor when there's
+// no pre-existing "Ungrouped" group at all.
+func TestSyncOnce_NoUngroupedCleanupWithoutStaleMonitor(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"},
+			},
+		},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.deletedIDs)
+}
+
+// TestSyncOnce_UngroupedDeviceNotSelfDeleted verifies a device that
+// genuinely lands under "Ungrouped" this cycle doesn't trigger its own
+// cleanup.
+func TestSyncOnce_UngroupedDeviceNotSelfDeleted(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			ungroupedGroupName: {
+				{GroupName: ungroupedGroupName, Name: "loner", Hostname: "192.168.1.9"},
+			},
+		},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.deletedIDs)
+	assert.Contains(t, k.createdGroupNames(), ungroupedGroupName)
+}
+
 func TestSyncOnce_HumanizeGroupNamesDisabled(t *testing.T) {
 	u := &mockUniFi{
 		deviceGroups: map[string][]unifi.MonitorableDevice{
