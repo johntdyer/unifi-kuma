@@ -18,7 +18,7 @@ import (
 // UniFiProvider is the subset of the UniFi client used by the syncer.
 type UniFiProvider interface {
 	Login(ctx context.Context, username, password string) error
-	MonitorableDevices(ctx context.Context, monitorGroup string) (map[string][]unifi.MonitorableDevice, error)
+	MonitorableDevices(ctx context.Context, monitorGroup, groupPrefix string) (map[string][]unifi.MonitorableDevice, error)
 }
 
 // KumaProvider is the subset of the Kuma client used by the syncer.
@@ -60,6 +60,7 @@ func (s *Syncer) Start(ctx context.Context) error {
 	s.logger.InfoContext(ctx, "starting sync loop",
 		"interval", s.cfg.Sync.Interval,
 		"monitor_group", s.cfg.Sync.MonitorGroup,
+		"group_prefix", s.cfg.Sync.GroupPrefix,
 		"dry_run", s.cfg.Sync.DryRun,
 	)
 
@@ -90,7 +91,7 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 	s.logger.InfoContext(ctx, "starting sync cycle")
 	start := time.Now()
 
-	deviceGroups, err := s.unifi.MonitorableDevices(ctx, s.cfg.Sync.MonitorGroup)
+	deviceGroups, err := s.unifi.MonitorableDevices(ctx, s.cfg.Sync.MonitorGroup, s.cfg.Sync.GroupPrefix)
 	if err != nil {
 		return fmt.Errorf("fetching monitorable devices: %w", err)
 	}
@@ -113,7 +114,10 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 	desired := make(map[string]map[string]struct{}, len(deviceGroups))
 
 	for groupName, devices := range deviceGroups {
-		displayName := displayGroupName(groupName)
+		displayName := groupName
+		if s.cfg.Sync.HumanizeGroupNames {
+			displayName = displayGroupName(groupName)
+		}
 
 		desired[displayName] = make(map[string]struct{}, len(devices))
 		for _, d := range devices {

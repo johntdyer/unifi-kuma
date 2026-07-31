@@ -156,11 +156,11 @@ func TestMonitorableDevices_Devices(t *testing.T) {
 	}
 	ts.groups = []Group{
 		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}},
-		{ID: "g2", Name: "servers", Members: []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 
@@ -178,11 +178,11 @@ func TestMonitorableDevices_Clients(t *testing.T) {
 	}
 	ts.groups = []Group{
 		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
-		{ID: "g2", Name: "iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["iot"]
@@ -201,11 +201,11 @@ func TestMonitorableDevices_OfflineClient(t *testing.T) {
 	}
 	ts.groups = []Group{
 		{ID: "g1", Name: "monitor", Members: []string{"58:97:bd:8f:66:9a"}},
-		{ID: "g2", Name: "servers", Members: []string{"58:97:bd:8f:66:9a"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"58:97:bd:8f:66:9a"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["servers"]
@@ -215,7 +215,7 @@ func TestMonitorableDevices_OfflineClient(t *testing.T) {
 }
 
 // TestMonitorableDevices_Ungrouped puts members of the flag group with no
-// other group membership under "Ungrouped".
+// matching Kuma-destination group under "Ungrouped".
 func TestMonitorableDevices_Ungrouped(t *testing.T) {
 	ts := newTestServer(t, true)
 	ts.clients = []NetworkClient{
@@ -226,7 +226,7 @@ func TestMonitorableDevices_Ungrouped(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["Ungrouped"]
@@ -234,8 +234,30 @@ func TestMonitorableDevices_Ungrouped(t *testing.T) {
 	assert.Equal(t, "Loner", devices[0].Name)
 }
 
-// TestMonitorableDevices_MultipleGroups fans a member out into every other
-// group it belongs to.
+// TestMonitorableDevices_IgnoresUnprefixedGroups verifies that a UniFi group
+// used for something unrelated (firewall rules, VLANs, etc.) that doesn't
+// carry the configured prefix is not treated as a Kuma-destination group —
+// its members land in "Ungrouped" instead.
+func TestMonitorableDevices_IgnoresUnprefixedGroups(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyPhone"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "apple", Members: []string{"aa:bb:cc:dd:ee:ff"}}, // no "kuma-group-" prefix
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+	require.Len(t, result, 1)
+	assert.Empty(t, result["apple"])
+	assert.Len(t, result["Ungrouped"], 1)
+}
+
+// TestMonitorableDevices_MultipleGroups fans a member out into every matching
+// Kuma-destination group it belongs to.
 func TestMonitorableDevices_MultipleGroups(t *testing.T) {
 	ts := newTestServer(t, true)
 	ts.clients = []NetworkClient{
@@ -243,12 +265,12 @@ func TestMonitorableDevices_MultipleGroups(t *testing.T) {
 	}
 	ts.groups = []Group{
 		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
-		{ID: "g2", Name: "servers", Members: []string{"aa:bb:cc:dd:ee:ff"}},
-		{ID: "g3", Name: "iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g3", Name: "kuma-group-iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 	assert.Len(t, result["servers"], 1)
@@ -259,10 +281,10 @@ func TestMonitorableDevices_MultipleGroups(t *testing.T) {
 // configured monitor group doesn't exist, rather than erroring.
 func TestMonitorableDevices_NoFlagGroup(t *testing.T) {
 	ts := newTestServer(t, true)
-	ts.groups = []Group{{ID: "1", Name: "servers", Members: []string{"aa:bb:cc:dd:ee:ff"}}}
+	ts.groups = []Group{{ID: "1", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff"}}}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -272,11 +294,11 @@ func TestMonitorableDevices_UnresolvableMember(t *testing.T) {
 	ts := newTestServer(t, true)
 	ts.groups = []Group{
 		{ID: "g1", Name: "monitor", Members: []string{"de:ad:be:ef:00:00"}},
-		{ID: "g2", Name: "servers", Members: []string{"de:ad:be:ef:00:00"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"de:ad:be:ef:00:00"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	assert.Empty(t, result["servers"]) // unresolvable, so nothing added
 }

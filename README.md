@@ -28,20 +28,23 @@ Inspired by [autokuma](https://github.com/BigBoot/AutoKuma), but source-of-truth
 
 ## How it works
 
-UniFi's **Groups** feature (Clients/Devices → Groups in the UI) lets you build named, reusable collections of devices/clients. unifi-kuma uses two kinds of group membership:
+UniFi's **Groups** feature (Clients/Devices → Groups in the UI) lets you build named, reusable collections of devices/clients — people commonly also use Groups for unrelated things like firewall rules or VLAN assignment, so unifi-kuma only pays attention to two specific kinds of group membership, both opt-in:
 
 1. On startup (and every `SYNC_INTERVAL_SECONDS`), unifi-kuma fetches all UniFi Groups and finds the one named `SYNC_MONITOR_GROUP` (default: `monitor`) — membership in it is the on/off switch for "should this get a ping monitor".
-2. For each member of that group, it checks which *other* UniFi group(s) that member also belongs to — that determines which Kuma group its monitor lands in (e.g. also in `servers` → monitor goes under **Servers**). A member of `monitor` with no other group membership lands under **Ungrouped**. A member of more than one other group gets a monitor created under each one.
+2. For each member of that group, it checks which *other* UniFi group(s) that member also belongs to whose name starts with `SYNC_GROUP_PREFIX` (default: `kuma-group`, so e.g. `kuma-group-servers`) — that determines which Kuma group its monitor lands in (the prefix is stripped: `kuma-group-servers` → **Servers**). Groups without that prefix are ignored for this purpose, even if the device is a member. A member of `monitor` with no matching prefixed group lands under **Ungrouped**. A member of more than one matching group gets a monitor created under each one.
 3. For every monitorable device/client it creates a **ping monitor** inside the matching Kuma group — using the device's management IP.
 4. Monitors created by this tool are labelled `unifi-kuma` so they can be tracked for optional orphan deletion.
+
+Kuma group names are title-cased by default (`kuma-group-servers` → **Servers**); set `SYNC_HUMANIZE_GROUP_NAMES=false` to use the raw suffix verbatim instead (`servers`).
 
 ### Example
 
 ```
 UniFi Groups
-  monitor   → members: router, nas, thermostat
-  servers   → members: router, nas
-  iot       → members: thermostat
+  monitor              → members: router, nas, thermostat
+  kuma-group-servers   → members: router, nas
+  kuma-group-iot       → members: thermostat
+  apple                → members: router          (no "kuma-group-" prefix — ignored)
 
 Uptime Kuma result
   📁 Servers
@@ -103,6 +106,8 @@ services:
       KUMA_PASSWORD: changeme
       # KUMA_DISABLE_AUTH: "true"     # instead of username/password, if Kuma has auth disabled
       SYNC_MONITOR_GROUP: monitor
+      SYNC_GROUP_PREFIX: kuma-group
+      # SYNC_HUMANIZE_GROUP_NAMES: "false"  # keep raw names (e.g. "servers") instead of "Servers"
       SYNC_INTERVAL_SECONDS: "300"
       SYNC_DRY_RUN: "false"
       SYNC_DELETE_ORPHAN: "false"
@@ -147,6 +152,8 @@ Validation requires both username and password for UniFi; for Kuma, either both 
 | `KUMA_PASSWORD` | *(required if no no-auth)* | Kuma password |
 | `KUMA_DISABLE_AUTH` | `false` | Connect without credentials, for instances with "Disable Auth" enabled |
 | `SYNC_MONITOR_GROUP` | `monitor` | Name of the UniFi Group whose members should be monitored |
+| `SYNC_GROUP_PREFIX` | `kuma-group` | Prefix identifying which other UniFi groups determine Kuma grouping (e.g. `kuma-group-servers`) |
+| `SYNC_HUMANIZE_GROUP_NAMES` | `true` | Title-case Kuma group names (`servers` → `Servers`); set `false` to use raw names verbatim |
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
 | `SYNC_DELETE_ORPHAN` | `false` | Delete monitors with no matching UniFi device |
@@ -169,6 +176,8 @@ kuma:
 
 sync:
   monitor_group: monitor
+  group_prefix: kuma-group
+  # humanize_group_names: false   # keep raw names (e.g. "servers") instead of "Servers"
   interval_seconds: 300
   dry_run: false
   delete_orphan: false
@@ -203,7 +212,7 @@ unifi-kuma only reads data from UniFi (groups, devices, clients) — it never ch
 
 1. In **UniFi Network**, go to **Clients** (or **Devices**) → **Groups**.
 2. Create a group named `monitor` (or whatever you set `SYNC_MONITOR_GROUP` to) and add every device/client you want a ping monitor for.
-3. Optionally, create additional groups (e.g. `servers`, `iot`) and add the same devices/clients to them too — that's what determines which Kuma group each monitor lands in. Skip this if you're fine with everything landing under **Ungrouped**.
+3. Optionally, create additional groups **named with the `kuma-group-` prefix** (or whatever you set `SYNC_GROUP_PREFIX` to) — e.g. `kuma-group-servers`, `kuma-group-iot` — and add the same devices/clients to them too. That's what determines which Kuma group each monitor lands in (the prefix is stripped from the Kuma group name). Groups without this prefix are ignored for grouping purposes, so it's safe to reuse UniFi Groups you already have for firewall rules, VLANs, etc. without them accidentally creating Kuma groups. Skip this step entirely if you're fine with everything landing under **Ungrouped**.
 4. unifi-kuma will pick up the change on the next sync cycle.
 
 > **Note:** This uses UniFi's internal Groups API (`/proxy/network/v2/api/site/{site}/network-members-groups`), the same one the web UI itself uses — undocumented by Ubiquiti, so exact availability may vary by controller/firmware version.

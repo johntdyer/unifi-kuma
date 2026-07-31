@@ -25,7 +25,7 @@ func (m *mockUniFi) Login(_ context.Context, _, _ string) error {
 	return m.loginErr
 }
 
-func (m *mockUniFi) MonitorableDevices(_ context.Context, _ string) (map[string][]unifi.MonitorableDevice, error) {
+func (m *mockUniFi) MonitorableDevices(_ context.Context, _, _ string) (map[string][]unifi.MonitorableDevice, error) {
 	return m.deviceGroups, m.devicesErr
 }
 
@@ -93,10 +93,12 @@ func defaultCfg() *config.Config {
 		UniFi: config.UniFiConfig{Username: "admin", Password: "secret"},
 		Kuma:  config.KumaConfig{Username: "kuma", Password: "kumasecret"},
 		Sync: config.SyncConfig{
-			Interval:     5 * time.Minute,
-			MonitorGroup: "monitor",
-			DryRun:       false,
-			DeleteOrphan: false,
+			Interval:           5 * time.Minute,
+			MonitorGroup:       "monitor",
+			GroupPrefix:        "kuma-group",
+			HumanizeGroupNames: true,
+			DryRun:             false,
+			DeleteOrphan:       false,
 		},
 	}
 }
@@ -358,6 +360,26 @@ func TestDisplayGroupName(t *testing.T) {
 			assert.Equal(t, tt.expected, displayGroupName(tt.name))
 		})
 	}
+}
+
+func TestSyncOnce_HumanizeGroupNamesDisabled(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"home-network": {
+				{GroupName: "home-network", Name: "router", Hostname: "192.168.1.1"},
+			},
+		},
+	}
+	k := newMockKuma()
+	cfg := defaultCfg()
+	cfg.Sync.HumanizeGroupNames = false
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, k.createdGroupNames(), "home-network")
+	assert.NotContains(t, k.createdGroupNames(), "Home Network")
 }
 
 func TestFindMonitorInList_Found(t *testing.T) {

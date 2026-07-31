@@ -166,38 +166,43 @@ func (c *Client) GetClients(ctx context.Context) ([]NetworkClient, error) {
 
 // MonitorableDevices returns a map of Kuma group name → devices to monitor.
 // Membership in the group named monitorGroup marks a device/client as
-// something to monitor; membership in any other group determines which Kuma
-// group its monitor lands in. A member of monitorGroup with no other group
-// membership is placed under "Ungrouped". A member of more than one other
-// group gets an entry — and so a monitor — under each one.
-func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup string) (map[string][]MonitorableDevice, error) {
+// something to monitor. Which Kuma group its monitor lands in is decided
+// only by membership in other UniFi groups named "{groupPrefix}-{name}" —
+// arbitrary UniFi groups used for unrelated purposes (firewall rules, VLAN
+// assignment, etc.) are ignored unless they carry that prefix. A member of
+// monitorGroup with no matching group is placed under "Ungrouped". A member
+// of more than one matching group gets an entry — and so a monitor — under
+// each one.
+func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPrefix string) (map[string][]MonitorableDevice, error) {
 	groups, err := c.GetGroups(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fetching groups: %w", err)
 	}
 
+	prefixDash := groupPrefix + "-"
+
 	var flagGroup *Group
-	otherGroups := make([]Group, 0, len(groups))
+	// Index: member MAC -> names of the Kuma-destination groups it belongs to.
+	memberGroups := make(map[string][]string)
 	for _, g := range groups {
 		if strings.EqualFold(g.Name, monitorGroup) {
-			flagGroup = &g
+			gg := g
+			flagGroup = &gg
 			continue
 		}
-		otherGroups = append(otherGroups, g)
+		if !strings.HasPrefix(strings.ToLower(g.Name), strings.ToLower(prefixDash)) {
+			continue
+		}
+		kumaGroupName := g.Name[len(prefixDash):]
+		for _, mac := range g.Members {
+			key := normalizeMAC(mac)
+			memberGroups[key] = append(memberGroups[key], kumaGroupName)
+		}
 	}
 
 	if flagGroup == nil {
 		c.logger.WarnContext(ctx, "monitor group not found", "group", monitorGroup)
 		return map[string][]MonitorableDevice{}, nil
-	}
-
-	// Index: member MAC -> names of the other groups it also belongs to.
-	memberGroups := make(map[string][]string)
-	for _, g := range otherGroups {
-		for _, mac := range g.Members {
-			key := normalizeMAC(mac)
-			memberGroups[key] = append(memberGroups[key], g.Name)
-		}
 	}
 
 	devices, err := c.GetDevices(ctx)
