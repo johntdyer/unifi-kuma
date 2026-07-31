@@ -39,6 +39,8 @@ UniFi's **Groups** feature (Clients/Devices → Groups in the UI) lets you build
 
 Optionally, set `SYNC_TAG_OTHER_GROUPS=true` to also tag each device's monitor with the name of every *other* UniFi group it belongs to — beyond the monitor-flag group and any `SYNC_GROUP_PREFIX`-matching group, which already determine tagging/grouping structurally. For example, a client that's a member of `monitor`, `kuma-group-media`, and `apple` ends up with the Kuma tags `unifi-kuma` and `apple` (`kuma-group-media` only affects which Kuma group it lands in — it's not itself a tag, and `monitor` is just the on/off switch). This is off by default since it can add a lot of tags if you use UniFi Groups heavily for other purposes (VLANs, firewall rules, etc.).
 
+These other-group tags are created with no color (Kuma's default) unless `SYNC_OTHER_GROUPS_TAG_COLOR` is set to one of `gray`, `red`, `orange`, `blue`, `indigo`, `purple`, or `pink` — matching the color names in Kuma's own tag color picker, so the tag looks the same whether it was created by unifi-kuma or picked by hand in the UI. This only colors newly *created* tags — it doesn't repaint a tag that already existed (e.g. one you colored manually, or one created before this setting was configured).
+
 Kuma group names are title-cased by default (`kuma-group-servers` → **Servers**); set `SYNC_HUMANIZE_GROUP_NAMES=false` to use the raw suffix verbatim instead (`servers`).
 
 ### Example
@@ -113,6 +115,7 @@ services:
       SYNC_GROUP_PREFIX: kuma-group
       # SYNC_HUMANIZE_GROUP_NAMES: "false"  # keep raw names (e.g. "servers") instead of "Servers"
       # SYNC_TAG_OTHER_GROUPS: "true"       # also tag monitors with the device's other UniFi group names
+      # SYNC_OTHER_GROUPS_TAG_COLOR: "purple"  # gray, red, orange, blue, indigo, purple, or pink
       SYNC_INTERVAL_SECONDS: "300"
       SYNC_DRY_RUN: "false"
       SYNC_DELETE_ORPHAN: "false"
@@ -160,6 +163,7 @@ Validation requires both username and password for UniFi; for Kuma, either both 
 | `SYNC_GROUP_PREFIX` | `kuma-group` | Prefix identifying which other UniFi groups determine Kuma grouping (e.g. `kuma-group-servers`) |
 | `SYNC_HUMANIZE_GROUP_NAMES` | `true` | Title-case Kuma group names (`servers` → `Servers`); set `false` to use raw names verbatim |
 | `SYNC_TAG_OTHER_GROUPS` | `false` | Tag each device's monitor with the name of every other UniFi group it belongs to (besides the monitor-flag and prefix-matching groups) |
+| `SYNC_OTHER_GROUPS_TAG_COLOR` | *(Kuma default)* | Color for tags created by `SYNC_TAG_OTHER_GROUPS`: one of `gray`, `red`, `orange`, `blue`, `indigo`, `purple`, `pink` |
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
 | `SYNC_DELETE_ORPHAN` | `false` | Delete monitors with no matching UniFi device |
@@ -185,6 +189,7 @@ sync:
   group_prefix: kuma-group
   # humanize_group_names: false   # keep raw names (e.g. "servers") instead of "Servers"
   # tag_other_groups: true        # also tag monitors with the device's other UniFi group names
+  # other_groups_tag_color: purple  # gray, red, orange, blue, indigo, purple, or pink
   interval_seconds: 300
   dry_run: false
   delete_orphan: false

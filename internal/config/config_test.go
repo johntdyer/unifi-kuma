@@ -48,6 +48,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, "kuma-group", cfg.Sync.GroupPrefix)
 	assert.True(t, cfg.Sync.HumanizeGroupNames)
 	assert.False(t, cfg.Sync.TagOtherGroups)
+	assert.Equal(t, "", cfg.Sync.OtherGroupsColor)
 	assert.Equal(t, 300, cfg.Sync.IntervalSecs)
 	assert.False(t, cfg.Sync.DryRun)
 	assert.False(t, cfg.Sync.DeleteOrphan)
@@ -68,6 +69,39 @@ func TestLoad_TagOtherGroupsOverride(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, cfg.Sync.TagOtherGroups)
+}
+
+func TestLoad_OtherGroupsColorOverride(t *testing.T) {
+	setEnv(t, map[string]string{
+		"UNIFI_URL":                   "https://unifi.example.com",
+		"UNIFI_USERNAME":              "admin",
+		"UNIFI_PASSWORD":              "secret",
+		"KUMA_URL":                    "http://kuma.example.com:3001",
+		"KUMA_USERNAME":               "kuma",
+		"KUMA_PASSWORD":               "kumasecret",
+		"SYNC_OTHER_GROUPS_TAG_COLOR": "Purple",
+	})
+
+	cfg, err := Load("")
+	require.NoError(t, err)
+
+	assert.Equal(t, "purple", cfg.Sync.OtherGroupsColor)
+}
+
+func TestLoad_OtherGroupsColorInvalid(t *testing.T) {
+	setEnv(t, map[string]string{
+		"UNIFI_URL":                   "https://unifi.example.com",
+		"UNIFI_USERNAME":              "admin",
+		"UNIFI_PASSWORD":              "secret",
+		"KUMA_URL":                    "http://kuma.example.com:3001",
+		"KUMA_USERNAME":               "kuma",
+		"KUMA_PASSWORD":               "kumasecret",
+		"SYNC_OTHER_GROUPS_TAG_COLOR": "green",
+	})
+
+	_, err := Load("")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "SYNC_OTHER_GROUPS_TAG_COLOR")
 }
 
 func TestLoad_GroupPrefixAndHumanizeOverrides(t *testing.T) {
@@ -263,7 +297,7 @@ func clearEnv(t *testing.T) {
 		"UNIFI_URL", "UNIFI_USERNAME", "UNIFI_PASSWORD", "UNIFI_SITE", "UNIFI_INSECURE",
 		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_DISABLE_AUTH",
 		"SYNC_INTERVAL_SECONDS", "SYNC_MONITOR_GROUP", "SYNC_GROUP_PREFIX", "SYNC_HUMANIZE_GROUP_NAMES",
-		"SYNC_TAG_OTHER_GROUPS", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
+		"SYNC_TAG_OTHER_GROUPS", "SYNC_OTHER_GROUPS_TAG_COLOR", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")

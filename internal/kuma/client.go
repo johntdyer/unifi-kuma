@@ -266,6 +266,27 @@ func ManagedLabel() MonitorTag {
 	return MonitorTag{Name: managedByLabel, Color: "#4a90d9"}
 }
 
+// TagColors maps human-friendly color names to the exact hex values Uptime
+// Kuma's own tag color picker uses (see its TagEditDialog.vue colorOptions),
+// so a tag created here renders identically to one picked manually in the
+// Kuma UI. Green is deliberately omitted from this list even though Kuma
+// itself offers it — unifi-kuma doesn't expose it as a selectable option.
+var TagColors = map[string]string{
+	"gray":   "#4B5563",
+	"red":    "#DC2626",
+	"orange": "#D97706",
+	"blue":   "#2563EB",
+	"indigo": "#4F46E5",
+	"purple": "#7C3AED",
+	"pink":   "#DB2777",
+}
+
+// TagColorHex resolves a color name (case-insensitive) to its Kuma hex
+// value, or "" if name is empty or unrecognized.
+func TagColorHex(name string) string {
+	return TagColors[strings.ToLower(strings.TrimSpace(name))]
+}
+
 // IsManagedMonitor returns true if the monitor was created by unifi-kuma.
 func IsManagedMonitor(m Monitor) bool {
 	for _, tag := range m.Tags {

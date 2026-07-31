@@ -451,8 +451,9 @@ func (s *Syncer) syncDevice(
 
 	tags := []kuma.MonitorTag{kuma.ManagedLabel()}
 	if s.cfg.Sync.TagOtherGroups {
+		color := kuma.TagColorHex(s.cfg.Sync.OtherGroupsColor)
 		for _, g := range device.OtherGroups {
-			tags = append(tags, kuma.MonitorTag{Name: g})
+			tags = append(tags, kuma.MonitorTag{Name: g, Color: color})
 		}
 	}
 
