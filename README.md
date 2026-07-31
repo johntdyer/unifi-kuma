@@ -224,6 +224,10 @@ unifi-kuma only reads data from UniFi (groups, devices, clients) — it never ch
 
 > **Note:** This uses UniFi's internal Groups API (`/proxy/network/v2/api/site/{site}/network-members-groups`), the same one the web UI itself uses — undocumented by Ubiquiti, so exact availability may vary by controller/firmware version.
 
+<img src="images/unifi-client.jpg" alt="UniFi client settings panel showing the Groups field with apple, monitor, and kuma-group-media assigned" width="360">
+
+A client assigned to `monitor` + `kuma-group-media` + `apple` this way gets a ping monitor created in Kuma's **Media** group, tagged `unifi-kuma` (and also `apple`, if `SYNC_TAG_OTHER_GROUPS=true`).
+
 ---
 
 ## Development
