@@ -187,9 +187,13 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 	}
 
 	id, err := s.kuma.CreateMonitor(ctx, kuma.Monitor{
-		Type:   kuma.MonitorTypeGroup,
-		Name:   name,
-		Active: true,
+		Type: kuma.MonitorTypeGroup,
+		Name: name,
+		// Uptime Kuma requires a positive interval even for group monitors,
+		// which don't otherwise use it — match the device monitors' default.
+		Interval:      60,
+		RetryInterval: 60,
+		Active:        true,
 	})
 	if err != nil {
 		return 0, fmt.Errorf("creating group %q: %w", name, err)
