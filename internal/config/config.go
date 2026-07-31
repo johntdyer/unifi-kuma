@@ -49,6 +49,7 @@ type SyncConfig struct {
 	MonitorGroup       string        `yaml:"monitor_group"`
 	GroupPrefix        string        `yaml:"group_prefix"`
 	HumanizeGroupNames bool          `yaml:"humanize_group_names"`
+	TagOtherGroups     bool          `yaml:"tag_other_groups"`
 	DryRun             bool          `yaml:"dry_run"`
 	DeleteOrphan       bool          `yaml:"delete_orphan"`
 }
@@ -144,6 +145,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SYNC_HUMANIZE_GROUP_NAMES"); v != "" {
 		cfg.Sync.HumanizeGroupNames = parseBool(v)
+	}
+	if v := os.Getenv("SYNC_TAG_OTHER_GROUPS"); v != "" {
+		cfg.Sync.TagOtherGroups = parseBool(v)
 	}
 	if v := os.Getenv("SYNC_DRY_RUN"); v != "" {
 		cfg.Sync.DryRun = parseBool(v)

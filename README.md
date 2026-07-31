@@ -33,9 +33,11 @@ UniFi's **Groups** feature (Clients/Devices → Groups in the UI) lets you build
 1. On startup (and every `SYNC_INTERVAL_SECONDS`), unifi-kuma fetches all UniFi Groups and finds the one named `SYNC_MONITOR_GROUP` (default: `monitor`) — membership in it is the on/off switch for "should this get a ping monitor".
 2. For each member of that group, it checks which *other* UniFi group(s) that member also belongs to whose name starts with `SYNC_GROUP_PREFIX` (default: `kuma-group`, so e.g. `kuma-group-servers`) — that determines which Kuma group its monitor lands in (the prefix is stripped: `kuma-group-servers` → **Servers**). Groups without that prefix are ignored for this purpose, even if the device is a member. A member of `monitor` with no matching prefixed group lands under **Ungrouped**. A member of more than one matching group gets a monitor created under each one.
 3. For every monitorable device/client it creates a **ping monitor** inside the matching Kuma group — using the device's management IP. If a monitor already exists for that device, its full configuration (hostname, interval, retries, active status) is reconciled to match every cycle — so an IP change in UniFi (e.g. a DHCP lease renewal) reaches an already-synced monitor instead of leaving it pointed at a stale address forever. This means any manual edit you make to a managed monitor directly in the Kuma UI (e.g. changing its interval) will be reverted on the next sync — managed monitors are meant to be fully owned by unifi-kuma's config, not hand-tuned.
-4. Monitors — both the device ping monitors and the groups themselves — are labelled `unifi-kuma` so they can be tracked for optional orphan deletion and safe duplicate cleanup (see below); anything you create by hand in Kuma is never touched, even if it happens to share a name.
+4. Monitors — both the device ping monitors and the groups themselves — are labelled `unifi-kuma` so they can be tracked for optional orphan deletion and safe duplicate cleanup (see below); anything you create by hand in Kuma is never touched, even if it happens to share a name. This label (and any tags from `SYNC_TAG_OTHER_GROUPS`, below) is also **backfilled** onto monitors and groups that already existed before tagging picked them up — e.g. Kuma monitors created by an older version of unifi-kuma, or a group that was found rather than newly created — so nothing is left permanently untagged just because of when it was first synced.
 5. If a device that was previously **Ungrouped** later gains a matching prefixed group, its stale Ungrouped monitor is removed automatically on the next sync — this always happens, independent of `SYNC_DELETE_ORPHAN`, since it's just cleaning up the same device's own outdated placement.
 6. If Kuma ever ends up with two group monitors sharing the same name, or two managed device monitors for the same device under the same group (from a historical bug, or a race between separate process instances), unifi-kuma treats the lowest-ID one as canonical and automatically removes the duplicate(s) — always, independent of `SYNC_DELETE_ORPHAN`. Unmanaged monitors you created by hand are never touched, even if they happen to share a name.
+
+Optionally, set `SYNC_TAG_OTHER_GROUPS=true` to also tag each device's monitor with the name of every *other* UniFi group it belongs to — beyond the monitor-flag group and any `SYNC_GROUP_PREFIX`-matching group, which already determine tagging/grouping structurally. For example, a client that's a member of `monitor`, `kuma-group-media`, and `apple` ends up with the Kuma tags `unifi-kuma` and `apple` (`kuma-group-media` only affects which Kuma group it lands in — it's not itself a tag, and `monitor` is just the on/off switch). This is off by default since it can add a lot of tags if you use UniFi Groups heavily for other purposes (VLANs, firewall rules, etc.).
 
 Kuma group names are title-cased by default (`kuma-group-servers` → **Servers**); set `SYNC_HUMANIZE_GROUP_NAMES=false` to use the raw suffix verbatim instead (`servers`).
 
@@ -110,6 +112,7 @@ services:
       SYNC_MONITOR_GROUP: monitor
       SYNC_GROUP_PREFIX: kuma-group
       # SYNC_HUMANIZE_GROUP_NAMES: "false"  # keep raw names (e.g. "servers") instead of "Servers"
+      # SYNC_TAG_OTHER_GROUPS: "true"       # also tag monitors with the device's other UniFi group names
       SYNC_INTERVAL_SECONDS: "300"
       SYNC_DRY_RUN: "false"
       SYNC_DELETE_ORPHAN: "false"
@@ -156,6 +159,7 @@ Validation requires both username and password for UniFi; for Kuma, either both 
 | `SYNC_MONITOR_GROUP` | `monitor` | Name of the UniFi Group whose members should be monitored |
 | `SYNC_GROUP_PREFIX` | `kuma-group` | Prefix identifying which other UniFi groups determine Kuma grouping (e.g. `kuma-group-servers`) |
 | `SYNC_HUMANIZE_GROUP_NAMES` | `true` | Title-case Kuma group names (`servers` → `Servers`); set `false` to use raw names verbatim |
+| `SYNC_TAG_OTHER_GROUPS` | `false` | Tag each device's monitor with the name of every other UniFi group it belongs to (besides the monitor-flag and prefix-matching groups) |
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
 | `SYNC_DELETE_ORPHAN` | `false` | Delete monitors with no matching UniFi device |
@@ -180,6 +184,7 @@ sync:
   monitor_group: monitor
   group_prefix: kuma-group
   # humanize_group_names: false   # keep raw names (e.g. "servers") instead of "Servers"
+  # tag_other_groups: true        # also tag monitors with the device's other UniFi group names
   interval_seconds: 300
   dry_run: false
   delete_orphan: false
