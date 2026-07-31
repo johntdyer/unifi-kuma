@@ -6,9 +6,9 @@
 [![Go 1.25+](https://img.shields.io/badge/Go-1.25+-00ADD8?logo=go)](https://golang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Automatically create and manage [Uptime Kuma](https://github.com/louislam/uptime-kuma) monitors from [UniFi](https://ui.com/) network tags! 
+Automatically create and manage [Uptime Kuma](https://github.com/louislam/uptime-kuma) monitors from [UniFi](https://ui.com/) network **Groups**.
 
-Tag a device or client in the UniFi UI with `kuma-servers` and unifi-kuma will create a ping monitor for it inside a **Servers** group in Uptime Kuma — and keep everything in sync on a configurable interval.
+Add a device or client to your UniFi `monitor` group (or whatever you name it), and unifi-kuma creates a ping monitor for it in Uptime Kuma — sorted into a matching Kuma group if it also belongs to another UniFi group (e.g. `servers`), or **Ungrouped** otherwise. Everything stays in sync on a configurable interval.
 
 Inspired by [autokuma](https://github.com/BigBoot/AutoKuma), but source-of-truth is your UniFi controller rather than Docker labels.
 
@@ -18,7 +18,7 @@ Inspired by [autokuma](https://github.com/BigBoot/AutoKuma), but source-of-truth
 
 | Component | Minimum version |
 |-----------|----------------|
-| UniFi OS / Network Application | 3.x / 8.x (tag API required) |
+| UniFi OS / Network Application | 3.x / 8.x (Groups API required) |
 | Uptime Kuma | any recent version |
 | Go (to build from source) | 1.25 |
 
@@ -28,17 +28,20 @@ Inspired by [autokuma](https://github.com/BigBoot/AutoKuma), but source-of-truth
 
 ## How it works
 
-1. On startup (and every `SYNC_INTERVAL_SECONDS`), unifi-kuma fetches all tags from UniFi whose names start with `SYNC_TAG_PREFIX` (default: `kuma`).
-2. For each matching tag (e.g. `kuma-servers`) it finds or creates an Uptime Kuma **monitor group** named after the tag (e.g. `Servers`).
-3. For every device or client in that tag it creates a **ping monitor** inside the group — using the device's management IP.
+UniFi's **Groups** feature (Clients/Devices → Groups in the UI) lets you build named, reusable collections of devices/clients. unifi-kuma uses two kinds of group membership:
+
+1. On startup (and every `SYNC_INTERVAL_SECONDS`), unifi-kuma fetches all UniFi Groups and finds the one named `SYNC_MONITOR_GROUP` (default: `monitor`) — membership in it is the on/off switch for "should this get a ping monitor".
+2. For each member of that group, it checks which *other* UniFi group(s) that member also belongs to — that determines which Kuma group its monitor lands in (e.g. also in `servers` → monitor goes under **Servers**). A member of `monitor` with no other group membership lands under **Ungrouped**. A member of more than one other group gets a monitor created under each one.
+3. For every monitorable device/client it creates a **ping monitor** inside the matching Kuma group — using the device's management IP.
 4. Monitors created by this tool are labelled `unifi-kuma` so they can be tracked for optional orphan deletion.
 
 ### Example
 
 ```
-UniFi tags
-  kuma-servers     → devices: router (192.168.1.1), nas (192.168.1.10)
-  kuma-iot         → devices: thermostat (10.0.1.50)
+UniFi Groups
+  monitor   → members: router, nas, thermostat
+  servers   → members: router, nas
+  iot       → members: thermostat
 
 Uptime Kuma result
   📁 Servers
@@ -99,7 +102,7 @@ services:
       KUMA_USERNAME: admin
       KUMA_PASSWORD: changeme
       # KUMA_DISABLE_AUTH: "true"     # instead of username/password, if Kuma has auth disabled
-      SYNC_TAG_PREFIX: kuma
+      SYNC_MONITOR_GROUP: monitor
       SYNC_INTERVAL_SECONDS: "300"
       SYNC_DRY_RUN: "false"
       SYNC_DELETE_ORPHAN: "false"
@@ -124,7 +127,7 @@ All settings can be provided as environment variables or via a YAML file. Enviro
 
 Neither UniFi nor Uptime Kuma can be authenticated with an API key for what this tool actually needs, so both use username+password:
 
-- **UniFi**: set `UNIFI_USERNAME`/`UNIFI_PASSWORD`. UniFi API keys only work against its newer public Integrations API, which doesn't expose tags at all — the thing this tool is built around — so a real login (the same session-based auth the web UI itself uses) is the only way to read tags. See [Creating a read-only UniFi user](#creating-a-read-only-unifi-user) below for a scoped-down account instead of using your main admin login.
+- **UniFi**: set `UNIFI_USERNAME`/`UNIFI_PASSWORD`. UniFi API keys only work against its newer public Integrations API, which doesn't expose Groups at all — the thing this tool is built around — so a real login (the same session-based auth the web UI itself uses) is the only way to read them. See [Creating a read-only UniFi user](#creating-a-read-only-unifi-user) below for a scoped-down account instead of using your main admin login.
 - **Uptime Kuma**: set `KUMA_USERNAME`/`KUMA_PASSWORD` — the same credentials you use to log into the Kuma web UI. (Kuma API keys only cover its push/badge REST endpoints, not the Socket.IO connection this tool uses for monitor management, so they can't be used here either.)
 - **Uptime Kuma with "Disable Auth" enabled**: set `KUMA_DISABLE_AUTH=true` instead. Kuma instances with authentication disabled (Settings → Security → Disable Auth) reject any login attempt, so `KUMA_DISABLE_AUTH=true` connects without sending credentials at all. `KUMA_USERNAME`/`KUMA_PASSWORD` are not needed in this mode.
 
@@ -143,7 +146,7 @@ Validation requires both username and password for UniFi; for Kuma, either both 
 | `KUMA_USERNAME` | *(required if no no-auth)* | Kuma username |
 | `KUMA_PASSWORD` | *(required if no no-auth)* | Kuma password |
 | `KUMA_DISABLE_AUTH` | `false` | Connect without credentials, for instances with "Disable Auth" enabled |
-| `SYNC_TAG_PREFIX` | `kuma` | Prefix of UniFi tags to watch |
+| `SYNC_MONITOR_GROUP` | `monitor` | Name of the UniFi Group whose members should be monitored |
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
 | `SYNC_DELETE_ORPHAN` | `false` | Delete monitors with no matching UniFi device |
@@ -165,7 +168,7 @@ kuma:
   # disable_auth: true   # instead of username/password, if Kuma has auth disabled
 
 sync:
-  tag_prefix: kuma
+  monitor_group: monitor
   interval_seconds: 300
   dry_run: false
   delete_orphan: false
@@ -175,7 +178,7 @@ Pass with `-config /path/to/config.yaml`.
 
 ### Creating a read-only UniFi user
 
-unifi-kuma only reads data from UniFi (tags, devices, clients) — it never changes anything on your controller — so it doesn't need a full admin account. Create a scoped-down local user instead of using your primary admin login:
+unifi-kuma only reads data from UniFi (groups, devices, clients) — it never changes anything on your controller — so it doesn't need a full admin account. Create a scoped-down local user instead of using your primary admin login:
 
 1. On the **UniFi OS console** (not inside the Network app itself), go to **Settings → Admins & Users**.
 2. Click **Add Admin** (or **+ Add User**) → choose to create a **local user** — look for a "restrict to local access only" option so this doesn't become a full Ubiquiti cloud (SSO) account with broader reach than your controller.
@@ -196,13 +199,14 @@ unifi-kuma only reads data from UniFi (tags, devices, clients) — it never chan
 
 ---
 
-## Tagging devices in UniFi
+## Setting up Groups in UniFi
 
-1. Open **UniFi Network** → select a device or client.
-2. Under the **Tags** section, add a tag like `kuma-servers`.
-3. unifi-kuma will pick it up on the next sync cycle.
+1. In **UniFi Network**, go to **Clients** (or **Devices**) → **Groups**.
+2. Create a group named `monitor` (or whatever you set `SYNC_MONITOR_GROUP` to) and add every device/client you want a ping monitor for.
+3. Optionally, create additional groups (e.g. `servers`, `iot`) and add the same devices/clients to them too — that's what determines which Kuma group each monitor lands in. Skip this if you're fine with everything landing under **Ungrouped**.
+4. unifi-kuma will pick up the change on the next sync cycle.
 
-> **Note:** The tag API requires UniFi Network Application 8.x or UniFi OS 3.x. If your controller is older, consider upgrading or opening an issue to discuss a notes-based fallback.
+> **Note:** This uses UniFi's internal Groups API (`/proxy/network/v2/api/site/{site}/network-members-groups`), the same one the web UI itself uses — undocumented by Ubiquiti, so exact availability may vary by controller/firmware version.
 
 ---
 

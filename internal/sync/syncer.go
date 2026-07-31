@@ -18,7 +18,7 @@ import (
 // UniFiProvider is the subset of the UniFi client used by the syncer.
 type UniFiProvider interface {
 	Login(ctx context.Context, username, password string) error
-	TaggedDevices(ctx context.Context, prefix string) (map[string][]unifi.TaggedDevice, error)
+	MonitorableDevices(ctx context.Context, monitorGroup string) (map[string][]unifi.MonitorableDevice, error)
 }
 
 // KumaProvider is the subset of the Kuma client used by the syncer.
@@ -59,7 +59,7 @@ func (s *Syncer) Start(ctx context.Context) error {
 
 	s.logger.InfoContext(ctx, "starting sync loop",
 		"interval", s.cfg.Sync.Interval,
-		"tag_prefix", s.cfg.Sync.TagPrefix,
+		"monitor_group", s.cfg.Sync.MonitorGroup,
 		"dry_run", s.cfg.Sync.DryRun,
 	)
 
@@ -90,9 +90,9 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 	s.logger.InfoContext(ctx, "starting sync cycle")
 	start := time.Now()
 
-	taggedDevices, err := s.unifi.TaggedDevices(ctx, s.cfg.Sync.TagPrefix)
+	deviceGroups, err := s.unifi.MonitorableDevices(ctx, s.cfg.Sync.MonitorGroup)
 	if err != nil {
-		return fmt.Errorf("fetching tagged devices: %w", err)
+		return fmt.Errorf("fetching monitorable devices: %w", err)
 	}
 
 	// Fetch all Kuma monitors once; everything else works from this snapshot.
@@ -110,19 +110,19 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 	}
 
 	// Build desired state for orphan detection.
-	desired := make(map[string]map[string]struct{}, len(taggedDevices))
+	desired := make(map[string]map[string]struct{}, len(deviceGroups))
 
-	for tagName, devices := range taggedDevices {
-		groupName := tagGroupName(tagName, s.cfg.Sync.TagPrefix)
+	for groupName, devices := range deviceGroups {
+		displayName := displayGroupName(groupName)
 
-		desired[groupName] = make(map[string]struct{}, len(devices))
+		desired[displayName] = make(map[string]struct{}, len(devices))
 		for _, d := range devices {
-			desired[groupName][d.Name] = struct{}{}
+			desired[displayName][d.Name] = struct{}{}
 		}
 
-		if err := s.syncTag(ctx, tagName, groupName, devices, groupsByName, monitors); err != nil {
-			s.logger.ErrorContext(ctx, "failed to sync tag",
-				"tag", tagName,
+		if err := s.syncGroup(ctx, groupName, displayName, devices, groupsByName, monitors); err != nil {
+			s.logger.ErrorContext(ctx, "failed to sync group",
+				"group", groupName,
 				"error", err,
 			)
 		}
@@ -136,39 +136,39 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 
 	s.logger.InfoContext(ctx, "sync cycle complete",
 		"duration", time.Since(start),
-		"tags", len(taggedDevices),
+		"groups", len(deviceGroups),
 	)
 	return nil
 }
 
-// syncTag ensures a Kuma group exists for the tag and that every device
-// in the tag has a corresponding ping monitor inside that group.
-func (s *Syncer) syncTag(
+// syncGroup ensures a Kuma group exists for the UniFi group and that every
+// device in it has a corresponding ping monitor inside that group.
+func (s *Syncer) syncGroup(
 	ctx context.Context,
-	tagName, groupName string,
-	devices []unifi.TaggedDevice,
+	sourceName, displayName string,
+	devices []unifi.MonitorableDevice,
 	groupsByName map[string]int,
 	monitors []kuma.Monitor,
 ) error {
 	if len(devices) == 0 {
-		s.logger.InfoContext(ctx, "skipping empty tag", "tag", tagName)
+		s.logger.InfoContext(ctx, "skipping empty group", "group", sourceName)
 		return nil
 	}
 
 	var groupID int
 	if !s.cfg.Sync.DryRun {
 		var err error
-		groupID, err = s.ensureGroup(ctx, groupName, groupsByName)
+		groupID, err = s.ensureGroup(ctx, displayName, groupsByName)
 		if err != nil {
-			return fmt.Errorf("find/create group %q: %w", groupName, err)
+			return fmt.Errorf("find/create group %q: %w", displayName, err)
 		}
 	}
 
 	for _, device := range devices {
-		if err := s.syncDevice(ctx, device, groupID, groupName, monitors); err != nil {
+		if err := s.syncDevice(ctx, device, groupID, displayName, monitors); err != nil {
 			s.logger.ErrorContext(ctx, "failed to sync device",
 				"device", device.Name,
-				"tag", tagName,
+				"group", sourceName,
 				"error", err,
 			)
 		}
@@ -204,7 +204,7 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 // It uses the pre-fetched monitor list instead of making an additional API call.
 func (s *Syncer) syncDevice(
 	ctx context.Context,
-	device unifi.TaggedDevice,
+	device unifi.MonitorableDevice,
 	groupID int,
 	groupName string,
 	monitors []kuma.Monitor,
@@ -325,14 +325,11 @@ func (s *Syncer) deleteOrphans(ctx context.Context, monitors []kuma.Monitor, des
 	return errors.Join(errs...)
 }
 
-// tagGroupName converts a tag like "kuma-access-points" to a readable group
-// name like "Access Points", stripping the prefix and title-casing each word.
-func tagGroupName(tagName, prefix string) string {
-	stripped := strings.TrimPrefix(tagName, prefix+"-")
-	if stripped == tagName {
-		return tagName
-	}
-	words := strings.Split(stripped, "-")
+// displayGroupName converts a UniFi group name like "unifi-cameras" into a
+// readable Kuma group name like "Unifi Cameras", title-casing each
+// hyphen-separated word.
+func displayGroupName(name string) string {
+	words := strings.Split(name, "-")
 	for i, w := range words {
 		if len(w) > 0 {
 			words[i] = strings.ToUpper(w[:1]) + strings.ToLower(w[1:])

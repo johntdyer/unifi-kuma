@@ -26,8 +26,8 @@ func TestLoad_EnvVars(t *testing.T) {
 	assert.Equal(t, "admin", cfg.UniFi.Username)
 	assert.Equal(t, "mysite", cfg.UniFi.Site)
 	assert.Equal(t, "http://kuma.example.com:3001", cfg.Kuma.URL)
-	assert.Equal(t, "kuma", cfg.Sync.TagPrefix) // default
-	assert.Equal(t, 300, cfg.Sync.IntervalSecs) // default
+	assert.Equal(t, "monitor", cfg.Sync.MonitorGroup) // default
+	assert.Equal(t, 300, cfg.Sync.IntervalSecs)       // default
 }
 
 func TestLoad_Defaults(t *testing.T) {
@@ -44,7 +44,7 @@ func TestLoad_Defaults(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "default", cfg.UniFi.Site)
-	assert.Equal(t, "kuma", cfg.Sync.TagPrefix)
+	assert.Equal(t, "monitor", cfg.Sync.MonitorGroup)
 	assert.Equal(t, 300, cfg.Sync.IntervalSecs)
 	assert.False(t, cfg.Sync.DryRun)
 	assert.False(t, cfg.Sync.DeleteOrphan)
@@ -59,7 +59,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 		"KUMA_USERNAME":         "kuma",
 		"KUMA_PASSWORD":         "kumasecret",
 		"SYNC_INTERVAL_SECONDS": "60",
-		"SYNC_TAG_PREFIX":       "monitor",
+		"SYNC_MONITOR_GROUP":    "watched",
 		"SYNC_DRY_RUN":          "true",
 		"SYNC_DELETE_ORPHAN":    "1",
 		"UNIFI_INSECURE":        "yes",
@@ -69,7 +69,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 60, cfg.Sync.IntervalSecs)
-	assert.Equal(t, "monitor", cfg.Sync.TagPrefix)
+	assert.Equal(t, "watched", cfg.Sync.MonitorGroup)
 	assert.True(t, cfg.Sync.DryRun)
 	assert.True(t, cfg.Sync.DeleteOrphan)
 	assert.True(t, cfg.UniFi.Insecure)
@@ -143,7 +143,7 @@ kuma:
   password: yamlkumasecret
 sync:
   interval_seconds: 120
-  tag_prefix: monitor
+  monitor_group: watched
 `)
 	require.NoError(t, err)
 	f.Close()
@@ -154,7 +154,7 @@ sync:
 	assert.Equal(t, "https://yaml-unifi.example.com", cfg.UniFi.URL)
 	assert.Equal(t, "yamlsite", cfg.UniFi.Site)
 	assert.Equal(t, 120, cfg.Sync.IntervalSecs)
-	assert.Equal(t, "monitor", cfg.Sync.TagPrefix)
+	assert.Equal(t, "watched", cfg.Sync.MonitorGroup)
 }
 
 func TestLoad_YAMLOverriddenByEnv(t *testing.T) {
@@ -223,7 +223,7 @@ func clearEnv(t *testing.T) {
 	keys := []string{
 		"UNIFI_URL", "UNIFI_USERNAME", "UNIFI_PASSWORD", "UNIFI_SITE", "UNIFI_INSECURE",
 		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_DISABLE_AUTH",
-		"SYNC_INTERVAL_SECONDS", "SYNC_TAG_PREFIX", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
+		"SYNC_INTERVAL_SECONDS", "SYNC_MONITOR_GROUP", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")

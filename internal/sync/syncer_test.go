@@ -16,17 +16,17 @@ import (
 // --- Mocks ---
 
 type mockUniFi struct {
-	loginErr      error
-	taggedDevices map[string][]unifi.TaggedDevice
-	taggedErr     error
+	loginErr     error
+	deviceGroups map[string][]unifi.MonitorableDevice
+	devicesErr   error
 }
 
 func (m *mockUniFi) Login(_ context.Context, _, _ string) error {
 	return m.loginErr
 }
 
-func (m *mockUniFi) TaggedDevices(_ context.Context, _ string) (map[string][]unifi.TaggedDevice, error) {
-	return m.taggedDevices, m.taggedErr
+func (m *mockUniFi) MonitorableDevices(_ context.Context, _ string) (map[string][]unifi.MonitorableDevice, error) {
+	return m.deviceGroups, m.devicesErr
 }
 
 type mockKuma struct {
@@ -94,7 +94,7 @@ func defaultCfg() *config.Config {
 		Kuma:  config.KumaConfig{Username: "kuma", Password: "kumasecret"},
 		Sync: config.SyncConfig{
 			Interval:     5 * time.Minute,
-			TagPrefix:    "kuma",
+			MonitorGroup: "monitor",
 			DryRun:       false,
 			DeleteOrphan: false,
 		},
@@ -107,9 +107,9 @@ func intPtr(i int) *int { return &i }
 
 func TestSyncOnce_CreatesGroupAndMonitor(t *testing.T) {
 	u := &mockUniFi{
-		taggedDevices: map[string][]unifi.TaggedDevice{
-			"kuma-servers": {
-				{TagName: "kuma-servers", Name: "gateway", Hostname: "192.168.1.1", MAC: "aa:bb:cc:dd:ee:ff"},
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1", MAC: "aa:bb:cc:dd:ee:ff"},
 			},
 		},
 	}
@@ -135,9 +135,9 @@ func TestSyncOnce_SkipsExistingMonitor(t *testing.T) {
 	}
 
 	u := &mockUniFi{
-		taggedDevices: map[string][]unifi.TaggedDevice{
-			"kuma-servers": {
-				{TagName: "kuma-servers", Name: "gateway", Hostname: "192.168.1.1"},
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"},
 			},
 		},
 	}
@@ -155,9 +155,9 @@ func TestSyncOnce_SkipsExistingMonitor(t *testing.T) {
 
 func TestSyncOnce_DryRun(t *testing.T) {
 	u := &mockUniFi{
-		taggedDevices: map[string][]unifi.TaggedDevice{
-			"kuma-servers": {
-				{TagName: "kuma-servers", Name: "switch", Hostname: "192.168.1.2"},
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "switch", Hostname: "192.168.1.2"},
 			},
 		},
 	}
@@ -174,9 +174,9 @@ func TestSyncOnce_DryRun(t *testing.T) {
 
 func TestSyncOnce_SkipsDeviceWithoutIP(t *testing.T) {
 	u := &mockUniFi{
-		taggedDevices: map[string][]unifi.TaggedDevice{
-			"kuma-servers": {
-				{TagName: "kuma-servers", Name: "no-ip-device", Hostname: ""},
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "no-ip-device", Hostname: ""},
 			},
 		},
 	}
@@ -202,9 +202,9 @@ func TestSyncOnce_DeleteOrphans(t *testing.T) {
 	}
 
 	u := &mockUniFi{
-		taggedDevices: map[string][]unifi.TaggedDevice{
-			"kuma-servers": {
-				{TagName: "kuma-servers", Name: "new-device", Hostname: "192.168.1.5"},
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "new-device", Hostname: "192.168.1.5"},
 			},
 		},
 	}
@@ -230,7 +230,7 @@ func TestSyncOnce_DeleteOrphans_ContinuesOnError(t *testing.T) {
 	orphan2 := kuma.Monitor{ID: 3, Name: "gone2", Type: kuma.MonitorTypePing,
 		ParentID: intPtr(1), Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}}}
 
-	u := &mockUniFi{taggedDevices: map[string][]unifi.TaggedDevice{}}
+	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
 
 	// Custom mock that fails on the first delete.
 	k := &errorOnFirstDeleteKuma{
@@ -265,14 +265,14 @@ func (m *errorOnFirstDeleteKuma) DeleteMonitor(ctx context.Context, id int) erro
 	return nil
 }
 
-func TestSyncOnce_MultipleTagsAndDevices(t *testing.T) {
+func TestSyncOnce_MultipleGroupsAndDevices(t *testing.T) {
 	u := &mockUniFi{
-		taggedDevices: map[string][]unifi.TaggedDevice{
-			"kuma-servers": {
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
 				{Name: "web1", Hostname: "10.0.0.1"},
 				{Name: "web2", Hostname: "10.0.0.2"},
 			},
-			"kuma-network": {
+			"network": {
 				{Name: "router", Hostname: "192.168.1.1"},
 			},
 		},
@@ -289,12 +289,12 @@ func TestSyncOnce_MultipleTagsAndDevices(t *testing.T) {
 
 func TestSyncOnce_OnlyOneFetchPerCycle(t *testing.T) {
 	u := &mockUniFi{
-		taggedDevices: map[string][]unifi.TaggedDevice{
-			"kuma-servers": {
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
 				{Name: "web1", Hostname: "10.0.0.1"},
 				{Name: "web2", Hostname: "10.0.0.2"},
 			},
-			"kuma-network": {
+			"network": {
 				{Name: "router", Hostname: "192.168.1.1"},
 			},
 		},
@@ -319,22 +319,20 @@ func (c *countingGetKuma) GetMonitors(ctx context.Context) ([]kuma.Monitor, erro
 	return c.mockKuma.GetMonitors(ctx)
 }
 
-func TestTagGroupName(t *testing.T) {
+func TestDisplayGroupName(t *testing.T) {
 	tests := []struct {
-		tag      string
-		prefix   string
+		name     string
 		expected string
 	}{
-		{"kuma-servers", "kuma", "Servers"},
-		{"kuma-home-network", "kuma", "Home Network"},   // spaces, not hyphens
-		{"kuma-access-points", "kuma", "Access Points"}, // multi-word with spaces
-		{"kuma", "kuma", "kuma"},                        // exact match, no strip
-		{"other-tag", "kuma", "other-tag"},              // no prefix match
+		{"servers", "Servers"},
+		{"home-network", "Home Network"},
+		{"access-points", "Access Points"},
+		{"unifi-cameras", "Unifi Cameras"},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.tag, func(t *testing.T) {
-			assert.Equal(t, tt.expected, tagGroupName(tt.tag, tt.prefix))
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expected, displayGroupName(tt.name))
 		})
 	}
 }
@@ -376,7 +374,7 @@ func TestFindMonitorInList_DeParentedUnmanaged(t *testing.T) {
 }
 
 func TestStart_StopsOnContextCancel(t *testing.T) {
-	u := &mockUniFi{taggedDevices: map[string][]unifi.TaggedDevice{}}
+	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
 	k := newMockKuma()
 
 	cfg := defaultCfg()
@@ -402,7 +400,7 @@ func TestStart_StopsOnContextCancel(t *testing.T) {
 }
 
 func TestStart_InitialSyncFatalOnError(t *testing.T) {
-	u := &mockUniFi{taggedDevices: map[string][]unifi.TaggedDevice{}}
+	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
 	k := newMockKuma()
 	k.monitorsErr = assert.AnError // GetMonitors fails → SyncOnce fails
 
