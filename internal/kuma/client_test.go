@@ -213,6 +213,11 @@ func TestCreateMonitor_Ping(t *testing.T) {
 	assert.Equal(t, "10.0.0.1", ping.Hostname)
 	require.NotNil(t, ping.Parent)
 	assert.Equal(t, int64(1), *ping.Parent)
+	// Kuma's "timeout" DB column is NOT NULL even for ping monitors, though
+	// the client library types it as optional — a nil pointer here breaks
+	// monitor creation server-side.
+	require.NotNil(t, ping.Timeout)
+	assert.Equal(t, defaultPingTimeout, *ping.Timeout)
 
 	// The managed-by tag should have been created and associated.
 	require.Len(t, conn.tags, 1)

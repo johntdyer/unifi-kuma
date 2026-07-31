@@ -22,6 +22,12 @@ const managedByLabel = "unifi-kuma"
 
 const connectTimeout = 30 * time.Second
 
+// defaultPingTimeout is used for every ping monitor's request timeout.
+// Kuma's "timeout" column is NOT NULL regardless of monitor type, even
+// though the client library types it as optional and the web UI doesn't
+// expose it for ping monitors.
+const defaultPingTimeout int64 = 48
+
 // kumaConn is the subset of the underlying Socket.IO client's methods that
 // Client relies on. Defined as an interface so tests can substitute a fake
 // without needing a live Uptime Kuma server; *kumaclient.Client satisfies it.
@@ -328,9 +334,14 @@ func fromMonitor(m Monitor) (kumamonitor.Monitor, error) {
 	case MonitorTypeGroup:
 		return &kumamonitor.Group{Base: base}, nil
 	case MonitorTypePing:
+		// Timeout is typed as optional (*int64) in the client library, but
+		// Kuma's own "timeout" DB column is NOT NULL for every monitor type
+		// including ping — a nil pointer marshals to JSON null and the
+		// insert is rejected server-side.
+		timeout := defaultPingTimeout
 		return &kumamonitor.Ping{
 			Base:        base,
-			PingDetails: kumamonitor.PingDetails{Hostname: m.Hostname},
+			PingDetails: kumamonitor.PingDetails{Hostname: m.Hostname, Timeout: &timeout},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported monitor type %q", m.Type)
