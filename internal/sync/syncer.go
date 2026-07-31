@@ -196,12 +196,14 @@ func (s *Syncer) syncGroup(
 // canonical group in this same cycle.
 func (s *Syncer) indexGroups(ctx context.Context, monitors *[]kuma.Monitor) map[string]int {
 	byName := make(map[string]int)
+	byID := make(map[int]kuma.Monitor)
 	duplicates := make(map[string][]int)
 
 	for _, m := range *monitors {
 		if m.Type != kuma.MonitorTypeGroup {
 			continue
 		}
+		byID[m.ID] = m
 		existing, ok := byName[m.Name]
 		switch {
 		case !ok:
@@ -215,12 +217,22 @@ func (s *Syncer) indexGroups(ctx context.Context, monitors *[]kuma.Monitor) map[
 	}
 
 	for name, extraIDs := range duplicates {
-		s.logger.WarnContext(ctx, "found duplicate Kuma groups with the same name, consolidating",
+		s.logger.WarnContext(ctx, "found duplicate Kuma groups with the same name",
 			"name", name,
 			"canonical_id", byName[name],
 			"duplicate_ids", extraIDs,
 		)
 		for _, extraID := range extraIDs {
+			// Only ever remove a duplicate we tagged ourselves — a group a
+			// user happens to have created by hand with a matching name is
+			// left alone rather than guessed at.
+			if !kuma.IsManagedMonitor(byID[extraID]) {
+				s.logger.WarnContext(ctx, "duplicate group is not managed by unifi-kuma, leaving it alone",
+					"group_id", extraID,
+					"name", name,
+				)
+				continue
+			}
 			s.consolidateGroup(ctx, extraID, monitors)
 		}
 	}
@@ -328,6 +340,7 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 		Interval:      60,
 		RetryInterval: 60,
 		Active:        true,
+		Tags:          []kuma.MonitorTag{kuma.ManagedLabel()},
 	}
 
 	id, err := s.kuma.CreateMonitor(ctx, group)
