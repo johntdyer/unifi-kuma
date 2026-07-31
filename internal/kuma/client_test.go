@@ -389,3 +389,12 @@ func TestManagedLabel(t *testing.T) {
 	assert.Equal(t, managedByLabel, label.Name)
 	assert.NotEmpty(t, label.Color)
 }
+
+func TestTagColorHex(t *testing.T) {
+	assert.Equal(t, "#4B5563", TagColorHex("gray"))
+	assert.Equal(t, "#DC2626", TagColorHex("Red"))
+	assert.Equal(t, "#7C3AED", TagColorHex("  purple  "))
+	assert.Equal(t, "", TagColorHex(""))
+	assert.Equal(t, "", TagColorHex("green"))
+	assert.Equal(t, "", TagColorHex("not-a-color"))
+}

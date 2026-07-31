@@ -607,6 +607,36 @@ func TestSyncOnce_TagOtherGroups(t *testing.T) {
 	assert.ElementsMatch(t, []string{"unifi-kuma", "apple"}, tagNames)
 }
 
+// TestSyncOnce_TagOtherGroupsColor verifies SYNC_OTHER_GROUPS_TAG_COLOR is
+// applied to other-group tags, but not to the unifi-kuma managed-by tag.
+func TestSyncOnce_TagOtherGroupsColor(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"media": {
+				{GroupName: "media", Name: "mac-mini", Hostname: "10.0.0.40", OtherGroups: []string{"apple"}},
+			},
+		},
+	}
+	k := newMockKuma()
+	cfg := defaultCfg()
+	cfg.Sync.TagOtherGroups = true
+	cfg.Sync.OtherGroupsColor = "purple"
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	devs := k.createdDeviceMonitors()
+	require.Len(t, devs, 1)
+
+	tagsByName := make(map[string]string)
+	for _, tag := range devs[0].Tags {
+		tagsByName[tag.Name] = tag.Color
+	}
+	assert.Equal(t, "#7C3AED", tagsByName["apple"])
+	assert.Equal(t, kuma.ManagedLabel().Color, tagsByName["unifi-kuma"])
+}
+
 // TestSyncOnce_TagOtherGroupsDisabled verifies OtherGroups is ignored by
 // default — only the managed-by tag is applied.
 func TestSyncOnce_TagOtherGroupsDisabled(t *testing.T) {

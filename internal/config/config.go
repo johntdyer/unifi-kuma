@@ -50,8 +50,22 @@ type SyncConfig struct {
 	GroupPrefix        string        `yaml:"group_prefix"`
 	HumanizeGroupNames bool          `yaml:"humanize_group_names"`
 	TagOtherGroups     bool          `yaml:"tag_other_groups"`
+	OtherGroupsColor   string        `yaml:"other_groups_tag_color"`
 	DryRun             bool          `yaml:"dry_run"`
 	DeleteOrphan       bool          `yaml:"delete_orphan"`
+}
+
+// validOtherGroupsColors lists the accepted values for
+// SYNC_OTHER_GROUPS_TAG_COLOR, matching the color names unifi-kuma exposes
+// (a subset of Uptime Kuma's own tag color palette).
+var validOtherGroupsColors = map[string]struct{}{
+	"gray":   {},
+	"red":    {},
+	"orange": {},
+	"blue":   {},
+	"indigo": {},
+	"purple": {},
+	"pink":   {},
 }
 
 // Load builds a Config from environment variables, with defaults.
@@ -79,6 +93,7 @@ func Load(yamlFile string) (*Config, error) {
 	applyEnv(cfg)
 
 	cfg.Sync.Interval = time.Duration(cfg.Sync.IntervalSecs) * time.Second
+	cfg.Sync.OtherGroupsColor = strings.ToLower(strings.TrimSpace(cfg.Sync.OtherGroupsColor))
 
 	return cfg, cfg.Validate()
 }
@@ -149,6 +164,9 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SYNC_TAG_OTHER_GROUPS"); v != "" {
 		cfg.Sync.TagOtherGroups = parseBool(v)
 	}
+	if v := os.Getenv("SYNC_OTHER_GROUPS_TAG_COLOR"); v != "" {
+		cfg.Sync.OtherGroupsColor = v
+	}
 	if v := os.Getenv("SYNC_DRY_RUN"); v != "" {
 		cfg.Sync.DryRun = parseBool(v)
 	}
@@ -174,6 +192,14 @@ func (c *Config) Validate() error {
 	}
 	if !c.Kuma.DisableAuth && (c.Kuma.Username == "" || c.Kuma.Password == "") {
 		errs = append(errs, "Kuma requires both KUMA_USERNAME and KUMA_PASSWORD, or KUMA_DISABLE_AUTH=true")
+	}
+	if c.Sync.OtherGroupsColor != "" {
+		if _, ok := validOtherGroupsColors[c.Sync.OtherGroupsColor]; !ok {
+			errs = append(errs, fmt.Sprintf(
+				"SYNC_OTHER_GROUPS_TAG_COLOR must be one of gray, red, orange, blue, indigo, purple, pink (got %q)",
+				c.Sync.OtherGroupsColor,
+			))
+		}
 	}
 
 	if len(errs) > 0 {
