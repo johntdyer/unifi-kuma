@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.1](https://github.com/johntdyer/unifi-kuma/compare/v4.0.0...v4.0.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* fall back to last_ip for clients not currently connected ([#22](https://github.com/johntdyer/unifi-kuma/issues/22)) ([86cb43f](https://github.com/johntdyer/unifi-kuma/commit/86cb43f5482fc0d7d1fd9094fc35ce483af1e337))
+
 ## [4.0.0](https://github.com/johntdyer/unifi-kuma/compare/v3.0.0...v4.0.0) (2026-07-31)
 
 
