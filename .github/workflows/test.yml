@@ -185,6 +185,23 @@ jobs:
       - name: golangci-lint
         run: golangci-lint run --timeout=5m ./...
 
+  # ── Vulnerability scan ────────────────────────────────────────────────────
+  vulncheck:
+    name: Vulnerability check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Official Go team tool: scans go.mod/go.sum plus the actual call graph
+      # for known vulnerabilities (govulncheck.org), so it only flags CVEs in
+      # code paths this binary actually reaches. Sets up its own Go toolchain.
+      - name: govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: "1.25"
+          check-latest: true
+
   # ── Build (binary + Docker) ───────────────────────────────────────────────
   build:
     name: Build
