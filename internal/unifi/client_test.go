@@ -191,6 +191,29 @@ func TestMonitorableDevices_Clients(t *testing.T) {
 	assert.Equal(t, "10.0.0.100", devices[0].Hostname)
 }
 
+// TestMonitorableDevices_OfflineClient verifies a client with no live "ip"
+// (only "last_ip", as UniFi reports for anything not currently connected)
+// still resolves rather than being skipped.
+func TestMonitorableDevices_OfflineClient(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "58:97:bd:8f:66:9a", LastIP: "10.222.222.11", Name: "server-proxmox2"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"58:97:bd:8f:66:9a"}},
+		{ID: "g2", Name: "servers", Members: []string{"58:97:bd:8f:66:9a"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	require.NoError(t, err)
+
+	devices := result["servers"]
+	require.Len(t, devices, 1)
+	assert.Equal(t, "server-proxmox2", devices[0].Name)
+	assert.Equal(t, "10.222.222.11", devices[0].Hostname)
+}
+
 // TestMonitorableDevices_Ungrouped puts members of the flag group with no
 // other group membership under "Ungrouped".
 func TestMonitorableDevices_Ungrouped(t *testing.T) {
@@ -281,6 +304,14 @@ func TestDevice_GetName_Fallback(t *testing.T) {
 
 	d.Name = "MyDevice"
 	assert.Equal(t, "MyDevice", d.GetName())
+}
+
+func TestClient_GetIP_FallsBackToLastIP(t *testing.T) {
+	c := NetworkClient{LastIP: "10.0.0.5"}
+	assert.Equal(t, "10.0.0.5", c.GetIP(), "should fall back to last_ip when not currently connected")
+
+	c.IP = "10.0.0.6"
+	assert.Equal(t, "10.0.0.6", c.GetIP(), "live ip should take precedence over last_ip")
 }
 
 func TestClient_GetName_Fallback(t *testing.T) {
