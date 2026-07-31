@@ -102,13 +102,8 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 		return fmt.Errorf("fetching existing monitors: %w", err)
 	}
 
-	// Index existing groups by name for O(1) lookup.
-	groupsByName := make(map[string]int, len(monitors))
-	for _, m := range monitors {
-		if m.Type == kuma.MonitorTypeGroup {
-			groupsByName[m.Name] = m.ID
-		}
-	}
+	groupsByName := s.indexGroups(ctx, &monitors)
+	s.consolidateDuplicateDevices(ctx, &monitors)
 
 	// Build desired state for orphan detection.
 	desired := make(map[string]map[string]struct{}, len(deviceGroups))
@@ -184,6 +179,135 @@ func (s *Syncer) syncGroup(
 	}
 
 	return nil
+}
+
+// indexGroups builds a name -> ID index of existing group monitors,
+// consolidating any duplicates it finds along the way — multiple group
+// monitors sharing the same name, a symptom of historical bugs or a race
+// between separate process instances both creating the same group at once.
+// Without consolidation, the index would key off whatever Go's (randomized)
+// map iteration order over the underlying monitor list happened to produce,
+// so which duplicate "wins" as the parent for new devices could change from
+// cycle to cycle, scattering devices across both. The lowest ID is kept as
+// canonical (the oldest, most likely to already have children); every other
+// same-named group monitor, and anything parented to it, is removed — the
+// normal sync loop then recreates anything still needed under the
+// canonical group in this same cycle.
+func (s *Syncer) indexGroups(ctx context.Context, monitors *[]kuma.Monitor) map[string]int {
+	byName := make(map[string]int)
+	duplicates := make(map[string][]int)
+
+	for _, m := range *monitors {
+		if m.Type != kuma.MonitorTypeGroup {
+			continue
+		}
+		existing, ok := byName[m.Name]
+		switch {
+		case !ok:
+			byName[m.Name] = m.ID
+		case m.ID < existing:
+			byName[m.Name] = m.ID
+			duplicates[m.Name] = append(duplicates[m.Name], existing)
+		default:
+			duplicates[m.Name] = append(duplicates[m.Name], m.ID)
+		}
+	}
+
+	for name, extraIDs := range duplicates {
+		s.logger.WarnContext(ctx, "found duplicate Kuma groups with the same name, consolidating",
+			"name", name,
+			"canonical_id", byName[name],
+			"duplicate_ids", extraIDs,
+		)
+		for _, extraID := range extraIDs {
+			s.consolidateGroup(ctx, extraID, monitors)
+		}
+	}
+
+	return byName
+}
+
+// consolidateGroup removes a duplicate group monitor and everything
+// parented to it.
+func (s *Syncer) consolidateGroup(ctx context.Context, groupID int, monitors *[]kuma.Monitor) {
+	if s.cfg.Sync.DryRun {
+		s.logger.InfoContext(ctx, "would remove duplicate group and its monitors", "group_id", groupID)
+		return
+	}
+
+	var children []int
+	for _, m := range *monitors {
+		if m.ParentID != nil && *m.ParentID == groupID {
+			children = append(children, m.ID)
+		}
+	}
+
+	for _, childID := range children {
+		if err := s.kuma.DeleteMonitor(ctx, childID); err != nil {
+			s.logger.ErrorContext(ctx, "failed to remove monitor under duplicate group",
+				"monitor_id", childID,
+				"group_id", groupID,
+				"error", err,
+			)
+			continue
+		}
+		*monitors = removeMonitorByID(*monitors, childID)
+	}
+
+	if err := s.kuma.DeleteMonitor(ctx, groupID); err != nil {
+		s.logger.ErrorContext(ctx, "failed to remove duplicate group", "group_id", groupID, "error", err)
+		return
+	}
+	*monitors = removeMonitorByID(*monitors, groupID)
+}
+
+// consolidateDuplicateDevices removes duplicate managed (non-group)
+// monitors sharing the same name and parent group, keeping the lowest ID
+// as canonical. Unlike duplicate groups, the current sync loop can no
+// longer create these (see the *[]kuma.Monitor threading in syncDevice) —
+// this exists purely to clean up pre-existing garbage from before that fix,
+// or from a race between separate process instances. Only monitors tagged
+// as managed by this tool are touched, so a monitor a user created by hand
+// that happens to share a name is never at risk.
+func (s *Syncer) consolidateDuplicateDevices(ctx context.Context, monitors *[]kuma.Monitor) {
+	type key struct {
+		parentID int
+		name     string
+	}
+
+	canonical := make(map[key]int)
+	var duplicates []int
+
+	for _, m := range *monitors {
+		if m.Type == kuma.MonitorTypeGroup || m.ParentID == nil || !kuma.IsManagedMonitor(m) {
+			continue
+		}
+		k := key{parentID: *m.ParentID, name: m.Name}
+		existing, ok := canonical[k]
+		switch {
+		case !ok:
+			canonical[k] = m.ID
+		case m.ID < existing:
+			canonical[k] = m.ID
+			duplicates = append(duplicates, existing)
+		default:
+			duplicates = append(duplicates, m.ID)
+		}
+	}
+
+	for _, id := range duplicates {
+		s.logger.WarnContext(ctx, "found duplicate monitor for the same device, removing", "monitor_id", id)
+
+		if s.cfg.Sync.DryRun {
+			continue
+		}
+
+		if err := s.kuma.DeleteMonitor(ctx, id); err != nil {
+			s.logger.ErrorContext(ctx, "failed to remove duplicate monitor", "monitor_id", id, "error", err)
+			continue
+		}
+		*monitors = removeMonitorByID(*monitors, id)
+	}
 }
 
 // ensureGroup returns the ID of an existing group or creates one.
