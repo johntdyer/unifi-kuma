@@ -40,11 +40,15 @@ type Device struct {
 	Version  string `json:"version"`
 }
 
-// NetworkClient represents a UniFi network client (end-user device).
+// NetworkClient represents a UniFi network client (end-user device). UniFi
+// only populates ip while the client is actively connected; last_ip is
+// always present (the most recently observed address), so a client that
+// isn't live right now still resolves to a usable ping target.
 type NetworkClient struct {
 	ID       string `json:"_id"`
 	MAC      string `json:"mac"`
 	IP       string `json:"ip"`
+	LastIP   string `json:"last_ip"`
 	Hostname string `json:"hostname"`
 	Name     string `json:"name"`
 }
@@ -79,9 +83,14 @@ func (d Device) GetName() string {
 	return d.MAC
 }
 
-// GetIP returns the IP for a NetworkClient.
+// GetIP returns the best available IP for a NetworkClient, preferring the
+// live ip and falling back to the last known address if it isn't currently
+// connected.
 func (c NetworkClient) GetIP() string {
-	return c.IP
+	if c.IP != "" {
+		return c.IP
+	}
+	return c.LastIP
 }
 
 // GetName returns a display name for the NetworkClient, falling back to hostname then MAC.
