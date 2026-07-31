@@ -46,7 +46,7 @@ type KumaConfig struct {
 type SyncConfig struct {
 	Interval     time.Duration `yaml:"-"`
 	IntervalSecs int           `yaml:"interval_seconds"`
-	TagPrefix    string        `yaml:"tag_prefix"`
+	MonitorGroup string        `yaml:"monitor_group"`
 	DryRun       bool          `yaml:"dry_run"`
 	DeleteOrphan bool          `yaml:"delete_orphan"`
 }
@@ -61,7 +61,7 @@ func Load(yamlFile string) (*Config, error) {
 		},
 		Sync: SyncConfig{
 			IntervalSecs: 300,
-			TagPrefix:    "kuma",
+			MonitorGroup: "monitor",
 		},
 	}
 
@@ -132,8 +132,8 @@ func applyEnv(cfg *Config) {
 			)
 		}
 	}
-	if v := os.Getenv("SYNC_TAG_PREFIX"); v != "" {
-		cfg.Sync.TagPrefix = v
+	if v := os.Getenv("SYNC_MONITOR_GROUP"); v != "" {
+		cfg.Sync.MonitorGroup = v
 	}
 	if v := os.Getenv("SYNC_DRY_RUN"); v != "" {
 		cfg.Sync.DryRun = parseBool(v)

@@ -125,10 +125,10 @@ func (c *Client) loginClassic(ctx context.Context, username, password string) er
 	return nil
 }
 
-// GetTags returns all tags from the UniFi site. Requires UniFi OS 3+ or
-// UniFi Network Application 8+.
-func (c *Client) GetTags(ctx context.Context) ([]Tag, error) {
-	url := c.v2URL("/tag")
+// GetGroups returns all "network members groups" (shown as "Groups" in the
+// UI) from the UniFi site.
+func (c *Client) GetGroups(ctx context.Context) ([]Group, error) {
+	url := c.v2URL("/network-members-groups")
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -146,37 +146,12 @@ func (c *Client) GetTags(ctx context.Context) ([]Tag, error) {
 		return nil, fmt.Errorf("GET %s returned status %d", url, resp.StatusCode)
 	}
 
-	var result struct {
-		Data []Tag `json:"data"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decoding tags response: %w", err)
+	var groups []Group
+	if err := json.NewDecoder(resp.Body).Decode(&groups); err != nil {
+		return nil, fmt.Errorf("decoding groups response: %w", err)
 	}
 
-	return result.Data, nil
-}
-
-// GetTagsWithPrefix returns tags whose names start with prefix followed by "-".
-func (c *Client) GetTagsWithPrefix(ctx context.Context, prefix string) ([]Tag, error) {
-	tags, err := c.GetTags(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	pattern := prefix + "-"
-	var matched []Tag
-	for _, t := range tags {
-		if strings.HasPrefix(t.Name, pattern) || t.Name == prefix {
-			matched = append(matched, t)
-		}
-	}
-
-	c.logger.InfoContext(ctx, "tags matched prefix",
-		"prefix", prefix,
-		"total", len(tags),
-		"matched", len(matched),
-	)
-	return matched, nil
+	return groups, nil
 }
 
 // GetDevices returns all adopted UniFi infrastructure devices (APs, switches, gateways).
@@ -189,19 +164,42 @@ func (c *Client) GetClients(ctx context.Context) ([]NetworkClient, error) {
 	return fetchV1List[NetworkClient](ctx, c, "/rest/user")
 }
 
-// TaggedDevices returns a map of tag name → slice of devices to monitor,
-// filtered by tags that match the given prefix.
-func (c *Client) TaggedDevices(ctx context.Context, prefix string) (map[string][]TaggedDevice, error) {
-	tags, err := c.GetTagsWithPrefix(ctx, prefix)
+// MonitorableDevices returns a map of Kuma group name → devices to monitor.
+// Membership in the group named monitorGroup marks a device/client as
+// something to monitor; membership in any other group determines which Kuma
+// group its monitor lands in. A member of monitorGroup with no other group
+// membership is placed under "Ungrouped". A member of more than one other
+// group gets an entry — and so a monitor — under each one.
+func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup string) (map[string][]MonitorableDevice, error) {
+	groups, err := c.GetGroups(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetching tags: %w", err)
+		return nil, fmt.Errorf("fetching groups: %w", err)
 	}
 
-	if len(tags) == 0 {
-		return map[string][]TaggedDevice{}, nil
+	var flagGroup *Group
+	otherGroups := make([]Group, 0, len(groups))
+	for _, g := range groups {
+		if strings.EqualFold(g.Name, monitorGroup) {
+			flagGroup = &g
+			continue
+		}
+		otherGroups = append(otherGroups, g)
 	}
 
-	// Build lookup indices for fast member resolution.
+	if flagGroup == nil {
+		c.logger.WarnContext(ctx, "monitor group not found", "group", monitorGroup)
+		return map[string][]MonitorableDevice{}, nil
+	}
+
+	// Index: member MAC -> names of the other groups it also belongs to.
+	memberGroups := make(map[string][]string)
+	for _, g := range otherGroups {
+		for _, mac := range g.Members {
+			key := normalizeMAC(mac)
+			memberGroups[key] = append(memberGroups[key], g.Name)
+		}
+	}
+
 	devices, err := c.GetDevices(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("fetching devices: %w", err)
@@ -217,87 +215,61 @@ func (c *Client) TaggedDevices(ctx context.Context, prefix string) (map[string][
 		deviceByMAC[normalizeMAC(d.MAC)] = d
 	}
 
-	clientByID := make(map[string]NetworkClient, len(clients))
 	clientByMAC := make(map[string]NetworkClient, len(clients))
 	for _, cl := range clients {
-		clientByID[cl.ID] = cl
 		clientByMAC[normalizeMAC(cl.MAC)] = cl
 	}
 
-	result := make(map[string][]TaggedDevice, len(tags))
-	for _, tag := range tags {
-		var tagged []TaggedDevice
+	const ungrouped = "Ungrouped"
 
-		for _, memberID := range tag.MemberIDs {
-			td, ok := resolveDevice(memberID, tag.MemberTable, deviceByMAC, clientByID, clientByMAC)
-			if !ok {
-				c.logger.WarnContext(ctx, "could not resolve tag member",
-					"tag", tag.Name,
-					"member_id", memberID,
-				)
-				continue
-			}
-			td.TagName = tag.Name
-			tagged = append(tagged, td)
+	result := make(map[string][]MonitorableDevice)
+	for _, mac := range flagGroup.Members {
+		key := normalizeMAC(mac)
+
+		name, hostname, ok := resolveMember(key, deviceByMAC, clientByMAC)
+		if !ok {
+			c.logger.WarnContext(ctx, "could not resolve group member",
+				"group", monitorGroup,
+				"mac", mac,
+			)
+			continue
 		}
 
-		result[tag.Name] = tagged
-		c.logger.InfoContext(ctx, "resolved tag members",
-			"tag", tag.Name,
-			"count", len(tagged),
-		)
+		groupNames := memberGroups[key]
+		if len(groupNames) == 0 {
+			groupNames = []string{ungrouped}
+		}
+
+		for _, gn := range groupNames {
+			result[gn] = append(result[gn], MonitorableDevice{
+				GroupName: gn,
+				Name:      name,
+				Hostname:  hostname,
+				MAC:       mac,
+			})
+		}
+	}
+
+	for gn, devs := range result {
+		c.logger.InfoContext(ctx, "resolved group members", "group", gn, "count", len(devs))
 	}
 
 	return result, nil
 }
 
-// resolveDevice finds a device or client matching the given member ID,
-// trying MAC normalization and direct ID lookup.
-func resolveDevice(
-	memberID, memberTable string,
+// resolveMember finds a device or client matching the given normalized MAC.
+func resolveMember(
+	mac string,
 	deviceByMAC map[string]Device,
-	clientByID map[string]NetworkClient,
 	clientByMAC map[string]NetworkClient,
-) (TaggedDevice, bool) {
-	normID := normalizeMAC(memberID)
-
-	switch memberTable {
-	case "networkdevice":
-		if d, ok := deviceByMAC[normID]; ok {
-			return TaggedDevice{
-				Name:     d.GetName(),
-				Hostname: d.GetIP(),
-				MAC:      d.MAC,
-			}, d.GetIP() != ""
-		}
-	case "user":
-		// Try by document ID first, then by MAC.
-		if cl, ok := clientByID[memberID]; ok {
-			return TaggedDevice{
-				Name:     cl.GetName(),
-				Hostname: cl.GetIP(),
-				MAC:      cl.MAC,
-			}, cl.GetIP() != ""
-		}
-		if cl, ok := clientByMAC[normID]; ok {
-			return TaggedDevice{
-				Name:     cl.GetName(),
-				Hostname: cl.GetIP(),
-				MAC:      cl.MAC,
-			}, cl.GetIP() != ""
-		}
-	default:
-		// Try both indices as a fallback.
-		if d, ok := deviceByMAC[normID]; ok {
-			return TaggedDevice{
-				Name:     d.GetName(),
-				Hostname: d.GetIP(),
-				MAC:      d.MAC,
-			}, d.GetIP() != ""
-		}
+) (name, hostname string, ok bool) {
+	if d, found := deviceByMAC[mac]; found {
+		return d.GetName(), d.GetIP(), d.GetIP() != ""
 	}
-
-	return TaggedDevice{}, false
+	if cl, found := clientByMAC[mac]; found {
+		return cl.GetName(), cl.GetIP(), cl.GetIP() != ""
+	}
+	return "", "", false
 }
 
 // v2URL builds an endpoint URL for the UniFi v2 API.

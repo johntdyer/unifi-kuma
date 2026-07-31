@@ -18,13 +18,14 @@ type apiResponse[T any] struct {
 	Data []T `json:"data"`
 }
 
-// Tag represents a UniFi network tag.
-type Tag struct {
-	ID          string   `json:"_id"`
-	Name        string   `json:"name"`
-	SiteID      string   `json:"site_id"`
-	MemberTable string   `json:"member_table"` // "networkdevice" or "user"
-	MemberIDs   []string `json:"member_ids"`
+// Group represents a UniFi "network members group" — shown as "Groups" in
+// the UI — a named, user-managed collection of devices/clients identified
+// by MAC address.
+type Group struct {
+	ID      string   `json:"id"`
+	Name    string   `json:"name"`
+	Type    string   `json:"type"` // "CLIENTS" or "DEVICES"
+	Members []string `json:"members"`
 }
 
 // Device represents a UniFi infrastructure device (AP, switch, gateway).
@@ -48,13 +49,13 @@ type NetworkClient struct {
 	Name     string `json:"name"`
 }
 
-// TaggedDevice combines tag context with the resolved host info needed
-// to create a monitor.
-type TaggedDevice struct {
-	TagName  string
-	Name     string
-	Hostname string // IP or DNS name to monitor
-	MAC      string
+// MonitorableDevice combines the Kuma group it should land in with the
+// resolved host info needed to create a monitor.
+type MonitorableDevice struct {
+	GroupName string
+	Name      string
+	Hostname  string // IP or DNS name to monitor
+	MAC       string
 }
 
 // normalizeMAC strips colons/dashes and uppercases a MAC address so that

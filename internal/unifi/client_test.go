@@ -20,7 +20,7 @@ type testServer struct {
 	isUDM   bool
 	devices []Device
 	clients []NetworkClient
-	tags    []Tag
+	groups  []Group
 }
 
 func newTestServer(t *testing.T, udm bool) *testServer {
@@ -61,8 +61,8 @@ func newTestServer(t *testing.T, udm bool) *testServer {
 		})
 	}
 
-	ts.mux.HandleFunc("/v2/api/site/default/tag", ts.handleTags)
-	ts.mux.HandleFunc("/proxy/network/v2/api/site/default/tag", ts.handleTags)
+	ts.mux.HandleFunc("/v2/api/site/default/network-members-groups", ts.handleGroups)
+	ts.mux.HandleFunc("/proxy/network/v2/api/site/default/network-members-groups", ts.handleGroups)
 
 	ts.mux.HandleFunc("/api/s/default/stat/device", ts.handleDevices)
 	ts.mux.HandleFunc("/proxy/network/api/s/default/stat/device", ts.handleDevices)
@@ -73,8 +73,10 @@ func newTestServer(t *testing.T, udm bool) *testServer {
 	return ts
 }
 
-func (ts *testServer) handleTags(w http.ResponseWriter, _ *http.Request) {
-	json.NewEncoder(w).Encode(map[string]any{"data": ts.tags})
+// handleGroups returns a bare JSON array, matching the real
+// network-members-groups API (no meta/data envelope).
+func (ts *testServer) handleGroups(w http.ResponseWriter, _ *http.Request) {
+	json.NewEncoder(w).Encode(ts.groups)
 }
 
 func (ts *testServer) handleDevices(w http.ResponseWriter, _ *http.Request) {
@@ -130,127 +132,130 @@ func TestLogin_BadCredentials(t *testing.T) {
 	require.Error(t, err)
 }
 
-// TestGetTags returns only tags from the API.
-func TestGetTags(t *testing.T) {
+// TestGetGroups returns all groups from the API.
+func TestGetGroups(t *testing.T) {
 	ts := newTestServer(t, true)
-	ts.tags = []Tag{
-		{ID: "1", Name: "kuma-servers", MemberTable: "networkdevice", MemberIDs: []string{"AABBCCDDEEFF"}},
-		{ID: "2", Name: "kuma-clients", MemberTable: "user", MemberIDs: []string{"111111111111"}},
+	ts.groups = []Group{
+		{ID: "1", Name: "monitor", Type: "CLIENTS", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "2", Name: "servers", Type: "CLIENTS", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 	}
 	c := ts.client(t)
 
-	tags, err := c.GetTags(context.Background())
+	groups, err := c.GetGroups(context.Background())
 	require.NoError(t, err)
-	assert.Len(t, tags, 2)
-	assert.Equal(t, "kuma-servers", tags[0].Name)
+	assert.Len(t, groups, 2)
+	assert.Equal(t, "monitor", groups[0].Name)
 }
 
-// TestGetTagsWithPrefix filters by prefix.
-func TestGetTagsWithPrefix(t *testing.T) {
-	ts := newTestServer(t, true)
-	ts.tags = []Tag{
-		{ID: "1", Name: "kuma-servers", MemberTable: "networkdevice"},
-		{ID: "2", Name: "kuma-clients", MemberTable: "user"},
-		{ID: "3", Name: "other-tag", MemberTable: "networkdevice"},
-	}
-	c := ts.client(t)
-
-	tags, err := c.GetTagsWithPrefix(context.Background(), "kuma")
-	require.NoError(t, err)
-	assert.Len(t, tags, 2)
-	for _, tag := range tags {
-		assert.True(t, len(tag.Name) > 0)
-		assert.NotEqual(t, "other-tag", tag.Name)
-	}
-}
-
-// TestGetTagsWithPrefix_ExactMatch allows exact prefix as a tag name.
-func TestGetTagsWithPrefix_ExactMatch(t *testing.T) {
-	ts := newTestServer(t, true)
-	ts.tags = []Tag{
-		{ID: "1", Name: "kuma", MemberTable: "networkdevice"},
-	}
-	c := ts.client(t)
-
-	tags, err := c.GetTagsWithPrefix(context.Background(), "kuma")
-	require.NoError(t, err)
-	assert.Len(t, tags, 1)
-}
-
-// TestTaggedDevices_Devices verifies resolution of tagged infrastructure devices.
-func TestTaggedDevices_Devices(t *testing.T) {
+// TestMonitorableDevices_Devices verifies resolution against infrastructure devices.
+func TestMonitorableDevices_Devices(t *testing.T) {
 	ts := newTestServer(t, true)
 	ts.devices = []Device{
 		{ID: "d1", MAC: "aa:bb:cc:dd:ee:ff", InformIP: "192.168.1.1", Name: "Gateway"},
 		{ID: "d2", MAC: "11:22:33:44:55:66", InformIP: "192.168.1.2", Name: "Switch"},
 	}
-	ts.tags = []Tag{
-		{
-			ID:          "t1",
-			Name:        "kuma-infra",
-			MemberTable: "networkdevice",
-			MemberIDs:   []string{"AABBCCDDEEFF", "112233445566"},
-		},
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}},
+		{ID: "g2", Name: "servers", Members: []string{"aa:bb:cc:dd:ee:ff", "11:22:33:44:55:66"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.TaggedDevices(context.Background(), "kuma")
+	result, err := c.MonitorableDevices(context.Background(), "monitor")
 	require.NoError(t, err)
-	assert.Len(t, result, 1)
+	require.Len(t, result, 1)
 
-	devices := result["kuma-infra"]
-	assert.Len(t, devices, 2)
+	devices := result["servers"]
+	require.Len(t, devices, 2)
 	assert.Equal(t, "Gateway", devices[0].Name)
 	assert.Equal(t, "192.168.1.1", devices[0].Hostname)
 }
 
-// TestTaggedDevices_Clients verifies resolution of tagged clients.
-func TestTaggedDevices_Clients(t *testing.T) {
+// TestMonitorableDevices_Clients verifies resolution against network clients.
+func TestMonitorableDevices_Clients(t *testing.T) {
 	ts := newTestServer(t, true)
 	ts.clients = []NetworkClient{
 		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyLaptop"},
 	}
-	ts.tags = []Tag{
-		{
-			ID:          "t1",
-			Name:        "kuma-clients",
-			MemberTable: "user",
-			MemberIDs:   []string{"c1"},
-		},
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.TaggedDevices(context.Background(), "kuma")
+	result, err := c.MonitorableDevices(context.Background(), "monitor")
 	require.NoError(t, err)
 
-	devices := result["kuma-clients"]
+	devices := result["iot"]
 	require.Len(t, devices, 1)
 	assert.Equal(t, "MyLaptop", devices[0].Name)
 	assert.Equal(t, "10.0.0.100", devices[0].Hostname)
 }
 
-// TestTaggedDevices_NoTags returns an empty map when no tags match.
-func TestTaggedDevices_NoTags(t *testing.T) {
+// TestMonitorableDevices_Ungrouped puts members of the flag group with no
+// other group membership under "Ungrouped".
+func TestMonitorableDevices_Ungrouped(t *testing.T) {
 	ts := newTestServer(t, true)
-	ts.tags = []Tag{{ID: "1", Name: "other-tag"}}
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "Loner"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
 	c := ts.client(t)
 
-	result, err := c.TaggedDevices(context.Background(), "kuma")
+	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	require.NoError(t, err)
+
+	devices := result["Ungrouped"]
+	require.Len(t, devices, 1)
+	assert.Equal(t, "Loner", devices[0].Name)
+}
+
+// TestMonitorableDevices_MultipleGroups fans a member out into every other
+// group it belongs to.
+func TestMonitorableDevices_MultipleGroups(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MultiHomed"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "servers", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g3", Name: "iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor")
+	require.NoError(t, err)
+	require.Len(t, result, 2)
+	assert.Len(t, result["servers"], 1)
+	assert.Len(t, result["iot"], 1)
+}
+
+// TestMonitorableDevices_NoFlagGroup returns an empty map when the
+// configured monitor group doesn't exist, rather than erroring.
+func TestMonitorableDevices_NoFlagGroup(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.groups = []Group{{ID: "1", Name: "servers", Members: []string{"aa:bb:cc:dd:ee:ff"}}}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor")
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
 
-// TestTaggedDevices_UnresolvableMember skips members with no matching device.
-func TestTaggedDevices_UnresolvableMember(t *testing.T) {
+// TestMonitorableDevices_UnresolvableMember skips members with no matching device/client.
+func TestMonitorableDevices_UnresolvableMember(t *testing.T) {
 	ts := newTestServer(t, true)
-	ts.tags = []Tag{
-		{ID: "t1", Name: "kuma-infra", MemberTable: "networkdevice", MemberIDs: []string{"DEADBEEF0000"}},
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"de:ad:be:ef:00:00"}},
+		{ID: "g2", Name: "servers", Members: []string{"de:ad:be:ef:00:00"}},
 	}
 	c := ts.client(t)
 
-	result, err := c.TaggedDevices(context.Background(), "kuma")
+	result, err := c.MonitorableDevices(context.Background(), "monitor")
 	require.NoError(t, err)
-	assert.Empty(t, result["kuma-infra"]) // unresolvable, so nothing added
+	assert.Empty(t, result["servers"]) // unresolvable, so nothing added
 }
 
 func TestNormalizeMAC(t *testing.T) {
