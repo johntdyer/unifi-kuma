@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
+	"sort"
 	"strings"
 	"time"
 )
@@ -187,22 +188,34 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 	// member list (or two prefixed groups resolving to the same name) can't
 	// produce a duplicate Kuma monitor.
 	memberGroups := make(map[string]map[string]struct{})
+	// Index: member MAC -> names of every other (non-flag, non-prefixed)
+	// UniFi group it belongs to — arbitrary groups reused for unrelated
+	// purposes (firewall rules, VLANs, etc.), exposed as MonitorableDevice
+	// data so the syncer can optionally surface them as Kuma tags.
+	memberOtherGroups := make(map[string]map[string]struct{})
 	for _, g := range groups {
 		if strings.EqualFold(g.Name, monitorGroup) {
 			gg := g
 			flagGroup = &gg
 			continue
 		}
-		if !strings.HasPrefix(strings.ToLower(g.Name), strings.ToLower(prefixDash)) {
+		if strings.HasPrefix(strings.ToLower(g.Name), strings.ToLower(prefixDash)) {
+			kumaGroupName := g.Name[len(prefixDash):]
+			for _, mac := range g.Members {
+				key := normalizeMAC(mac)
+				if memberGroups[key] == nil {
+					memberGroups[key] = make(map[string]struct{})
+				}
+				memberGroups[key][kumaGroupName] = struct{}{}
+			}
 			continue
 		}
-		kumaGroupName := g.Name[len(prefixDash):]
 		for _, mac := range g.Members {
 			key := normalizeMAC(mac)
-			if memberGroups[key] == nil {
-				memberGroups[key] = make(map[string]struct{})
+			if memberOtherGroups[key] == nil {
+				memberOtherGroups[key] = make(map[string]struct{})
 			}
-			memberGroups[key][kumaGroupName] = struct{}{}
+			memberOtherGroups[key][g.Name] = struct{}{}
 		}
 	}
 
@@ -256,12 +269,19 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 			groupNames = map[string]struct{}{ungrouped: {}}
 		}
 
+		var otherGroups []string
+		for gn := range memberOtherGroups[key] {
+			otherGroups = append(otherGroups, gn)
+		}
+		sort.Strings(otherGroups)
+
 		for gn := range groupNames {
 			result[gn] = append(result[gn], MonitorableDevice{
-				GroupName: gn,
-				Name:      name,
-				Hostname:  hostname,
-				MAC:       mac,
+				GroupName:   gn,
+				Name:        name,
+				Hostname:    hostname,
+				MAC:         mac,
+				OtherGroups: otherGroups,
 			})
 		}
 	}

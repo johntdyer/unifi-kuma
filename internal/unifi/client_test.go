@@ -277,6 +277,52 @@ func TestMonitorableDevices_MultipleGroups(t *testing.T) {
 	assert.Len(t, result["iot"], 1)
 }
 
+// TestMonitorableDevices_OtherGroups verifies that arbitrary UniFi groups
+// (neither the flag group nor a prefixed destination group) are surfaced as
+// OtherGroups, while the flag group and prefixed groups are excluded from
+// it since they're already represented structurally.
+func TestMonitorableDevices_OtherGroups(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyPhone"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-media", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g3", Name: "apple", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+
+	devices := result["media"]
+	require.Len(t, devices, 1)
+	assert.Equal(t, []string{"apple"}, devices[0].OtherGroups)
+}
+
+// TestMonitorableDevices_OtherGroups_MultipleSorted verifies OtherGroups is
+// sorted for a deterministic tag order regardless of more than one match.
+func TestMonitorableDevices_OtherGroups_MultipleSorted(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyPhone"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "zebra", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g3", Name: "apple", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+
+	devices := result["Ungrouped"]
+	require.Len(t, devices, 1)
+	assert.Equal(t, []string{"apple", "zebra"}, devices[0].OtherGroups)
+}
+
 // TestMonitorableDevices_DedupesFlagGroupMembers verifies a MAC listed
 // twice in the flag group's own member list only produces one entry —
 // otherwise it would pass the "already exists" check twice against the

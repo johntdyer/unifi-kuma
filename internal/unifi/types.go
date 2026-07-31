@@ -60,6 +60,11 @@ type MonitorableDevice struct {
 	Name      string
 	Hostname  string // IP or DNS name to monitor
 	MAC       string
+	// OtherGroups lists every other UniFi group this device belongs to,
+	// besides the monitor flag group and any group matching groupPrefix
+	// (those are already represented structurally via GroupName). Sorted
+	// for a deterministic tag order.
+	OtherGroups []string
 }
 
 // normalizeMAC strips colons/dashes and uppercases a MAC address so that

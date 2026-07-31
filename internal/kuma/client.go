@@ -150,18 +150,29 @@ func (c *Client) CreateMonitor(ctx context.Context, m Monitor) (int, error) {
 	}
 	id := int(id64)
 
-	for _, t := range m.Tags {
-		tagID, err := c.ensureTag(ctx, t.Name, t.Color)
-		if err != nil {
-			return id, fmt.Errorf("ensuring tag %q for monitor %q (id %d): %w", t.Name, m.Name, id, err)
-		}
-		if _, err := c.conn.AddMonitorTag(ctx, tagID, id64, t.Value); err != nil {
-			return id, fmt.Errorf("tagging monitor %q (id %d) with %q: %w", m.Name, id, t.Name, err)
-		}
+	if err := c.AddTags(ctx, id, m.Tags); err != nil {
+		return id, err
 	}
 
 	c.logger.InfoContext(ctx, "created monitor", "name", m.Name, "id", id)
 	return id, nil
+}
+
+// AddTags associates each tag with an existing monitor, creating any tag
+// that doesn't exist yet. Used both right after creating a monitor and to
+// backfill the managed-by tag onto a monitor that already existed before
+// tagging was introduced for its type.
+func (c *Client) AddTags(ctx context.Context, monitorID int, tags []MonitorTag) error {
+	for _, t := range tags {
+		tagID, err := c.ensureTag(ctx, t.Name, t.Color)
+		if err != nil {
+			return fmt.Errorf("ensuring tag %q for monitor %d: %w", t.Name, monitorID, err)
+		}
+		if _, err := c.conn.AddMonitorTag(ctx, tagID, int64(monitorID), t.Value); err != nil {
+			return fmt.Errorf("tagging monitor %d with %q: %w", monitorID, t.Name, err)
+		}
+	}
+	return nil
 }
 
 // UpdateMonitor overwrites an existing monitor's configuration (hostname,

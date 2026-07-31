@@ -29,6 +29,7 @@ type KumaProvider interface {
 	GetMonitors(ctx context.Context) ([]kuma.Monitor, error)
 	CreateMonitor(ctx context.Context, m kuma.Monitor) (int, error)
 	UpdateMonitor(ctx context.Context, m kuma.Monitor) error
+	AddTags(ctx context.Context, monitorID int, tags []kuma.MonitorTag) error
 	DeleteMonitor(ctx context.Context, id int) error
 }
 
@@ -329,6 +330,7 @@ func (s *Syncer) consolidateDuplicateDevices(ctx context.Context, monitors *[]ku
 func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string]int, monitors *[]kuma.Monitor) (int, error) {
 	if id, ok := groups[name]; ok {
 		s.logger.InfoContext(ctx, "found existing group", "name", name, "id", id)
+		s.backfillTags(ctx, id, []kuma.MonitorTag{kuma.ManagedLabel()}, monitors)
 		return id, nil
 	}
 
@@ -353,6 +355,58 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 	*monitors = append(*monitors, group)
 	s.logger.InfoContext(ctx, "created group", "name", name, "id", id)
 	return id, nil
+}
+
+// backfillTags ensures the monitor found by ID in monitors carries every tag
+// in desired, adding whichever ones are missing (matched by name) and
+// leaving any others already on the monitor untouched — tags are only ever
+// added here, never removed, so e.g. a tag from a UniFi group the device
+// was later taken out of stays put rather than disappearing on its own.
+// This exists because CreateMonitor is the only place tags were ever
+// applied before — UpdateMonitor doesn't touch them (Kuma manages tags as
+// separate associations) — so anything created by an earlier version of
+// this tool, or reconciled before a new desired tag was introduced, would
+// otherwise never pick it up and stay invisible to every managed-only
+// mechanism (orphan deletion, duplicate consolidation).
+func (s *Syncer) backfillTags(ctx context.Context, monitorID int, desired []kuma.MonitorTag, monitors *[]kuma.Monitor) {
+	for i := range *monitors {
+		m := &(*monitors)[i]
+		if m.ID != monitorID {
+			continue
+		}
+
+		have := make(map[string]struct{}, len(m.Tags))
+		for _, t := range m.Tags {
+			have[t.Name] = struct{}{}
+		}
+
+		var missing []kuma.MonitorTag
+		for _, t := range desired {
+			if _, ok := have[t.Name]; !ok {
+				missing = append(missing, t)
+			}
+		}
+		if len(missing) == 0 {
+			return
+		}
+
+		if err := s.kuma.AddTags(ctx, monitorID, missing); err != nil {
+			s.logger.ErrorContext(ctx, "failed to backfill tags",
+				"monitor_id", monitorID,
+				"name", m.Name,
+				"error", err,
+			)
+			return
+		}
+
+		m.Tags = append(m.Tags, missing...)
+		s.logger.InfoContext(ctx, "backfilled tags onto existing monitor",
+			"monitor_id", monitorID,
+			"name", m.Name,
+			"count", len(missing),
+		)
+		return
+	}
 }
 
 // ungroupedGroupName is the Kuma group devices land in when they're
@@ -395,6 +449,13 @@ func (s *Syncer) syncDevice(
 		return nil
 	}
 
+	tags := []kuma.MonitorTag{kuma.ManagedLabel()}
+	if s.cfg.Sync.TagOtherGroups {
+		for _, g := range device.OtherGroups {
+			tags = append(tags, kuma.MonitorTag{Name: g})
+		}
+	}
+
 	monitor := kuma.Monitor{
 		Type:          kuma.MonitorTypePing,
 		Name:          device.Name,
@@ -405,7 +466,7 @@ func (s *Syncer) syncDevice(
 		ParentID:      &groupID,
 		Active:        true,
 		Description:   fmt.Sprintf("managed by unifi-kuma | mac:%s", device.MAC),
-		Tags:          []kuma.MonitorTag{kuma.ManagedLabel()},
+		Tags:          tags,
 	}
 
 	if existing := findMonitorInList(*monitors, device.Name, groupID); existing != nil {
@@ -420,7 +481,17 @@ func (s *Syncer) syncDevice(
 		if err := s.kuma.UpdateMonitor(ctx, monitor); err != nil {
 			return fmt.Errorf("updating monitor for %s: %w", device.Name, err)
 		}
+
+		// UpdateMonitor doesn't touch tags — Kuma manages them as separate
+		// associations — so preserve the real current tags here rather than
+		// assuming ours are already set, and backfill whichever desired
+		// tags are missing separately (covers a monitor created before
+		// device-monitor tagging existed, or before TagOtherGroups was
+		// turned on).
+		desiredTags := monitor.Tags
+		monitor.Tags = existing.Tags
 		*existing = monitor
+		s.backfillTags(ctx, existing.ID, desiredTags, monitors)
 
 		s.logger.InfoContext(ctx, "reconciled existing monitor",
 			"device", device.Name,

@@ -35,6 +35,7 @@ type mockKuma struct {
 	monitorsErr     error
 	createdMonitors []kuma.Monitor
 	updatedMonitors []kuma.Monitor
+	addTagsCalls    []int
 	deletedIDs      []int
 	nextID          int
 }
@@ -64,7 +65,21 @@ func (m *mockKuma) UpdateMonitor(_ context.Context, mon kuma.Monitor) error {
 	m.updatedMonitors = append(m.updatedMonitors, mon)
 	for i, existing := range m.monitors {
 		if existing.ID == mon.ID {
+			// The real Kuma update API never touches tags — mirror that so
+			// tests correctly exercise the tag-backfill path.
+			mon.Tags = existing.Tags
 			m.monitors[i] = mon
+			break
+		}
+	}
+	return nil
+}
+
+func (m *mockKuma) AddTags(_ context.Context, monitorID int, tags []kuma.MonitorTag) error {
+	m.addTagsCalls = append(m.addTagsCalls, monitorID)
+	for i, existing := range m.monitors {
+		if existing.ID == monitorID {
+			m.monitors[i].Tags = append(m.monitors[i].Tags, tags...)
 			break
 		}
 	}
@@ -505,6 +520,113 @@ func TestSyncOnce_ConsolidatesDuplicateGroups_DryRun(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, k.deletedIDs)
+}
+
+// TestSyncOnce_BackfillsTagOnExistingGroup verifies a group created before
+// group tagging existed gets the managed-by tag backfilled the next time
+// it's synced, rather than staying untagged forever.
+func TestSyncOnce_BackfillsTagOnExistingGroup(t *testing.T) {
+	untaggedGroup := kuma.Monitor{ID: 1, Name: "Iot", Type: kuma.MonitorTypeGroup, Active: true} // no Tags
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"iot": {
+				{GroupName: "iot", Name: "thermostat", Hostname: "10.0.1.50"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{untaggedGroup}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, k.addTagsCalls, 1)
+	assert.True(t, kuma.IsManagedMonitor(k.monitors[0]), "group should now carry the managed tag")
+	assert.Empty(t, k.createdGroupNames(), "existing group should be reused, not recreated")
+}
+
+// TestSyncOnce_BackfillsTagOnExistingDevice verifies a device monitor
+// created before device-monitor tagging existed gets the managed-by tag
+// backfilled the next time it's reconciled.
+func TestSyncOnce_BackfillsTagOnExistingDevice(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true}
+	untaggedDevice := kuma.Monitor{
+		ID: 2, Name: "gateway", Type: kuma.MonitorTypePing,
+		Hostname: "192.168.1.1", ParentID: intPtr(1), Active: true,
+		// No Tags: created before device-monitor tagging existed.
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{group, untaggedDevice}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, k.addTagsCalls, 2)
+	assert.True(t, kuma.IsManagedMonitor(k.monitors[1]), "device monitor should now carry the managed tag")
+}
+
+// TestSyncOnce_TagOtherGroups verifies that when enabled, a device's other
+// UniFi group memberships (e.g. "apple") are added as Kuma tags alongside
+// the managed-by tag, matching the exact scenario reported: a client with
+// "monitor", "kuma-group-media", and "apple" should end up tagged "apple"
+// and "unifi-kuma" in Kuma.
+func TestSyncOnce_TagOtherGroups(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"media": {
+				{GroupName: "media", Name: "mac-mini", Hostname: "10.0.0.40", OtherGroups: []string{"apple"}},
+			},
+		},
+	}
+	k := newMockKuma()
+	cfg := defaultCfg()
+	cfg.Sync.TagOtherGroups = true
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	devs := k.createdDeviceMonitors()
+	require.Len(t, devs, 1)
+
+	var tagNames []string
+	for _, t := range devs[0].Tags {
+		tagNames = append(tagNames, t.Name)
+	}
+	assert.ElementsMatch(t, []string{"unifi-kuma", "apple"}, tagNames)
+}
+
+// TestSyncOnce_TagOtherGroupsDisabled verifies OtherGroups is ignored by
+// default — only the managed-by tag is applied.
+func TestSyncOnce_TagOtherGroupsDisabled(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"media": {
+				{GroupName: "media", Name: "mac-mini", Hostname: "10.0.0.40", OtherGroups: []string{"apple"}},
+			},
+		},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	devs := k.createdDeviceMonitors()
+	require.Len(t, devs, 1)
+	require.Len(t, devs[0].Tags, 1)
+	assert.Equal(t, "unifi-kuma", devs[0].Tags[0].Name)
 }
 
 // TestSyncOnce_LeavesUnmanagedDuplicateGroupAlone verifies a group monitor
