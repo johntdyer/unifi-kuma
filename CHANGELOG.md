@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.2.0](https://github.com/johntdyer/unifi-kuma/compare/v4.1.1...v4.2.0) (2026-07-31)
+
+
+### Features
+
+* remove stale Ungrouped monitor once a device gains a real group ([#31](https://github.com/johntdyer/unifi-kuma/issues/31)) ([baedb6d](https://github.com/johntdyer/unifi-kuma/commit/baedb6da1c35dc5875cfcc72e148994a01f6b1b2))
+
 ## [4.1.1](https://github.com/johntdyer/unifi-kuma/compare/v4.1.0...v4.1.1) (2026-07-31)
 
 
