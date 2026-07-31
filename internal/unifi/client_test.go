@@ -277,6 +277,45 @@ func TestMonitorableDevices_MultipleGroups(t *testing.T) {
 	assert.Len(t, result["iot"], 1)
 }
 
+// TestMonitorableDevices_DedupesFlagGroupMembers verifies a MAC listed
+// twice in the flag group's own member list only produces one entry —
+// otherwise it would pass the "already exists" check twice against the
+// same stale-within-cycle data and create a duplicate monitor.
+func TestMonitorableDevices_DedupesFlagGroupMembers(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyLaptop"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+	assert.Len(t, result["servers"], 1)
+}
+
+// TestMonitorableDevices_DedupesDestinationGroupMembers verifies a MAC
+// listed twice in a single Kuma-destination group's member list doesn't
+// produce two entries for that device under the same Kuma group.
+func TestMonitorableDevices_DedupesDestinationGroupMembers(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyLaptop"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff", "aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+	assert.Len(t, result["servers"], 1)
+}
+
 // TestMonitorableDevices_NoFlagGroup returns an empty map when the
 // configured monitor group doesn't exist, rather than erroring.
 func TestMonitorableDevices_NoFlagGroup(t *testing.T) {

@@ -124,7 +124,7 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 			desired[displayName][d.Name] = struct{}{}
 		}
 
-		if err := s.syncGroup(ctx, groupName, displayName, devices, groupsByName, monitors); err != nil {
+		if err := s.syncGroup(ctx, groupName, displayName, devices, groupsByName, &monitors); err != nil {
 			s.logger.ErrorContext(ctx, "failed to sync group",
 				"group", groupName,
 				"error", err,
@@ -146,13 +146,18 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 }
 
 // syncGroup ensures a Kuma group exists for the UniFi group and that every
-// device in it has a corresponding ping monitor inside that group.
+// device in it has a corresponding ping monitor inside that group. monitors
+// is a pointer so newly created monitors are immediately visible to the
+// duplicate checks in the rest of this sync cycle — without this, a device
+// appearing twice (e.g. once per matching UniFi group) would pass the
+// "does this monitor already exist" check twice against the same stale
+// snapshot and create a duplicate.
 func (s *Syncer) syncGroup(
 	ctx context.Context,
 	sourceName, displayName string,
 	devices []unifi.MonitorableDevice,
 	groupsByName map[string]int,
-	monitors []kuma.Monitor,
+	monitors *[]kuma.Monitor,
 ) error {
 	if len(devices) == 0 {
 		s.logger.InfoContext(ctx, "skipping empty group", "group", sourceName)
@@ -162,7 +167,7 @@ func (s *Syncer) syncGroup(
 	var groupID int
 	if !s.cfg.Sync.DryRun {
 		var err error
-		groupID, err = s.ensureGroup(ctx, displayName, groupsByName)
+		groupID, err = s.ensureGroup(ctx, displayName, groupsByName, monitors)
 		if err != nil {
 			return fmt.Errorf("find/create group %q: %w", displayName, err)
 		}
@@ -184,13 +189,13 @@ func (s *Syncer) syncGroup(
 // ensureGroup returns the ID of an existing group or creates one.
 // The groups map is updated in-place so subsequent calls within the same
 // sync cycle do not create duplicates and require no extra API calls.
-func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string]int) (int, error) {
+func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string]int, monitors *[]kuma.Monitor) (int, error) {
 	if id, ok := groups[name]; ok {
 		s.logger.InfoContext(ctx, "found existing group", "name", name, "id", id)
 		return id, nil
 	}
 
-	id, err := s.kuma.CreateMonitor(ctx, kuma.Monitor{
+	group := kuma.Monitor{
 		Type: kuma.MonitorTypeGroup,
 		Name: name,
 		// Uptime Kuma requires a positive interval even for group monitors,
@@ -198,12 +203,16 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 		Interval:      60,
 		RetryInterval: 60,
 		Active:        true,
-	})
+	}
+
+	id, err := s.kuma.CreateMonitor(ctx, group)
 	if err != nil {
 		return 0, fmt.Errorf("creating group %q: %w", name, err)
 	}
 
 	groups[name] = id
+	group.ID = id
+	*monitors = append(*monitors, group)
 	s.logger.InfoContext(ctx, "created group", "name", name, "id", id)
 	return id, nil
 }
@@ -215,7 +224,7 @@ func (s *Syncer) syncDevice(
 	device unifi.MonitorableDevice,
 	groupID int,
 	groupName string,
-	monitors []kuma.Monitor,
+	monitors *[]kuma.Monitor,
 ) error {
 	if device.Hostname == "" {
 		s.logger.WarnContext(ctx, "skipping device without IP",
@@ -236,7 +245,7 @@ func (s *Syncer) syncDevice(
 		return nil
 	}
 
-	if existing := findMonitorInList(monitors, device.Name, groupID); existing != nil {
+	if existing := findMonitorInList(*monitors, device.Name, groupID); existing != nil {
 		s.logger.InfoContext(ctx, "monitor already exists, skipping",
 			"device", device.Name,
 			"monitor_id", existing.ID,
@@ -261,6 +270,9 @@ func (s *Syncer) syncDevice(
 	if err != nil {
 		return fmt.Errorf("creating monitor for %s: %w", device.Name, err)
 	}
+
+	monitor.ID = id
+	*monitors = append(*monitors, monitor)
 
 	s.logger.InfoContext(ctx, "created monitor",
 		"device", device.Name,
