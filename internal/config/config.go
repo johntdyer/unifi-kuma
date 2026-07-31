@@ -44,11 +44,13 @@ type KumaConfig struct {
 
 // SyncConfig holds sync behavior settings.
 type SyncConfig struct {
-	Interval     time.Duration `yaml:"-"`
-	IntervalSecs int           `yaml:"interval_seconds"`
-	MonitorGroup string        `yaml:"monitor_group"`
-	DryRun       bool          `yaml:"dry_run"`
-	DeleteOrphan bool          `yaml:"delete_orphan"`
+	Interval           time.Duration `yaml:"-"`
+	IntervalSecs       int           `yaml:"interval_seconds"`
+	MonitorGroup       string        `yaml:"monitor_group"`
+	GroupPrefix        string        `yaml:"group_prefix"`
+	HumanizeGroupNames bool          `yaml:"humanize_group_names"`
+	DryRun             bool          `yaml:"dry_run"`
+	DeleteOrphan       bool          `yaml:"delete_orphan"`
 }
 
 // Load builds a Config from environment variables, with defaults.
@@ -60,8 +62,10 @@ func Load(yamlFile string) (*Config, error) {
 			Site: "default",
 		},
 		Sync: SyncConfig{
-			IntervalSecs: 300,
-			MonitorGroup: "monitor",
+			IntervalSecs:       300,
+			MonitorGroup:       "monitor",
+			GroupPrefix:        "kuma-group",
+			HumanizeGroupNames: true,
 		},
 	}
 
@@ -134,6 +138,12 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SYNC_MONITOR_GROUP"); v != "" {
 		cfg.Sync.MonitorGroup = v
+	}
+	if v := os.Getenv("SYNC_GROUP_PREFIX"); v != "" {
+		cfg.Sync.GroupPrefix = v
+	}
+	if v := os.Getenv("SYNC_HUMANIZE_GROUP_NAMES"); v != "" {
+		cfg.Sync.HumanizeGroupNames = parseBool(v)
 	}
 	if v := os.Getenv("SYNC_DRY_RUN"); v != "" {
 		cfg.Sync.DryRun = parseBool(v)
