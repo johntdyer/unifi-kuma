@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.0](https://github.com/johntdyer/unifi-kuma/compare/v5.2.0...v5.3.0) (2026-07-31)
+
+
+### Features
+
+* add SYNC_OTHER_GROUPS_TAG_COLOR to color other-group tags ([#43](https://github.com/johntdyer/unifi-kuma/issues/43)) ([cf0d52b](https://github.com/johntdyer/unifi-kuma/commit/cf0d52b57d82ccac63be2dbdd2055fceeb7541c0))
+
 ## [5.2.0](https://github.com/johntdyer/unifi-kuma/compare/v5.1.1...v5.2.0) (2026-07-31)
 
 
