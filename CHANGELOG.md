@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.2.0](https://github.com/johntdyer/unifi-kuma/compare/v5.1.1...v5.2.0) (2026-07-31)
+
+
+### Features
+
+* backfill managed tags and add SYNC_TAG_OTHER_GROUPS support ([#39](https://github.com/johntdyer/unifi-kuma/issues/39)) ([694373c](https://github.com/johntdyer/unifi-kuma/commit/694373cee5e362790e01b1b1ac02b9d91df42124))
+
 ## [5.1.1](https://github.com/johntdyer/unifi-kuma/compare/v5.1.0...v5.1.1) (2026-07-31)
 
 
