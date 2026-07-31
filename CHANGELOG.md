@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.0.2](https://github.com/johntdyer/unifi-kuma/compare/v4.0.1...v4.0.2) (2026-07-31)
+
+
+### Bug Fixes
+
+* set a positive interval on group monitors ([#24](https://github.com/johntdyer/unifi-kuma/issues/24)) ([c8c9c6f](https://github.com/johntdyer/unifi-kuma/commit/c8c9c6f9b60f3cfa38bcdbaffbd2d468040bc8f5))
+
 ## [4.0.1](https://github.com/johntdyer/unifi-kuma/compare/v4.0.0...v4.0.1) (2026-07-31)
 
 
