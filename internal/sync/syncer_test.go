@@ -127,6 +127,29 @@ func TestSyncOnce_CreatesGroupAndMonitor(t *testing.T) {
 	assert.Equal(t, kuma.MonitorTypePing, devs[0].Type)
 }
 
+// TestSyncOnce_GroupMonitorHasValidInterval guards against a real bug: Kuma
+// rejects any monitor, including groups, with interval 0 ("Interval cannot
+// be less than 1 seconds").
+func TestSyncOnce_GroupMonitorHasValidInterval(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"},
+			},
+		},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, k.createdMonitors, 2) // group + device
+	group := k.createdMonitors[0]
+	require.Equal(t, kuma.MonitorTypeGroup, group.Type)
+	assert.Positive(t, group.Interval, "group monitor must have a positive interval")
+}
+
 func TestSyncOnce_SkipsExistingMonitor(t *testing.T) {
 	existingGroup := kuma.Monitor{ID: 50, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true}
 	existingMonitor := kuma.Monitor{
