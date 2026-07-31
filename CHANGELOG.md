@@ -1,5 +1,16 @@
 # Changelog
 
+## [5.0.0](https://github.com/johntdyer/unifi-kuma/compare/v4.2.0...v5.0.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* reconcile existing monitors instead of leaving them frozen ([#33](https://github.com/johntdyer/unifi-kuma/issues/33))
+
+### Features
+
+* reconcile existing monitors instead of leaving them frozen ([#33](https://github.com/johntdyer/unifi-kuma/issues/33)) ([00c3845](https://github.com/johntdyer/unifi-kuma/commit/00c3845777e1612f7370259d7fb48e839377eec0))
+
 ## [4.2.0](https://github.com/johntdyer/unifi-kuma/compare/v4.1.1...v4.2.0) (2026-07-31)
 
 
