@@ -1,5 +1,16 @@
 # Changelog
 
+## [4.0.0](https://github.com/johntdyer/unifi-kuma/compare/v3.0.0...v4.0.0) (2026-07-31)
+
+
+### ⚠ BREAKING CHANGES
+
+* sync from UniFi Groups instead of tags ([#20](https://github.com/johntdyer/unifi-kuma/issues/20))
+
+### Features
+
+* sync from UniFi Groups instead of tags ([#20](https://github.com/johntdyer/unifi-kuma/issues/20)) ([a3cf974](https://github.com/johntdyer/unifi-kuma/commit/a3cf974531a51af9d5637c406b7d6b813625934c))
+
 ## [3.0.0](https://github.com/johntdyer/unifi-kuma/compare/v2.0.0...v3.0.0) (2026-07-30)
 
 
