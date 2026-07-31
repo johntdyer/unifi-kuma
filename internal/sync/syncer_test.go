@@ -162,6 +162,7 @@ func TestSyncOnce_GroupMonitorHasValidInterval(t *testing.T) {
 	group := k.createdMonitors[0]
 	require.Equal(t, kuma.MonitorTypeGroup, group.Type)
 	assert.Positive(t, group.Interval, "group monitor must have a positive interval")
+	assert.True(t, kuma.IsManagedMonitor(group), "group monitor should be tagged as managed by unifi-kuma")
 }
 
 func TestSyncOnce_ReconcilesExistingMonitor(t *testing.T) {
@@ -438,8 +439,14 @@ func TestSyncOnce_NoDuplicateMonitorForRepeatedDevice(t *testing.T) {
 // higher-ID duplicate and everything parented to it are removed, and the
 // device ends up with exactly one monitor under the surviving group.
 func TestSyncOnce_ConsolidatesDuplicateGroups(t *testing.T) {
-	canonicalGroup := kuma.Monitor{ID: 2595, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
-	duplicateGroup := kuma.Monitor{ID: 2597, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
+	canonicalGroup := kuma.Monitor{
+		ID: 2595, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+	duplicateGroup := kuma.Monitor{
+		ID: 2597, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
 	staleUnderDuplicate := kuma.Monitor{
 		ID: 2598, Name: "sonos-one", Type: kuma.MonitorTypePing,
 		Hostname: "10.0.0.50", ParentID: intPtr(2597), Active: true,
@@ -472,8 +479,14 @@ func TestSyncOnce_ConsolidatesDuplicateGroups(t *testing.T) {
 // TestSyncOnce_ConsolidatesDuplicateGroups_DryRun verifies dry-run mode
 // doesn't actually delete anything while consolidating.
 func TestSyncOnce_ConsolidatesDuplicateGroups_DryRun(t *testing.T) {
-	canonicalGroup := kuma.Monitor{ID: 2595, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
-	duplicateGroup := kuma.Monitor{ID: 2597, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
+	canonicalGroup := kuma.Monitor{
+		ID: 2595, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+	duplicateGroup := kuma.Monitor{
+		ID: 2597, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
 
 	u := &mockUniFi{
 		deviceGroups: map[string][]unifi.MonitorableDevice{
@@ -492,6 +505,37 @@ func TestSyncOnce_ConsolidatesDuplicateGroups_DryRun(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Empty(t, k.deletedIDs)
+}
+
+// TestSyncOnce_LeavesUnmanagedDuplicateGroupAlone verifies a group monitor
+// without the managed-by tag — e.g. one a user created by hand that happens
+// to collide by name — is never deleted, even though it looks like a
+// duplicate of a managed group.
+func TestSyncOnce_LeavesUnmanagedDuplicateGroupAlone(t *testing.T) {
+	canonicalGroup := kuma.Monitor{
+		ID: 2595, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+	unmanagedGroup := kuma.Monitor{
+		ID: 2597, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true,
+		// No managed-by tag: a user made this one by hand.
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"sonos-speakers": {
+				{GroupName: "sonos-speakers", Name: "sonos-one", Hostname: "10.0.0.50"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{canonicalGroup, unmanagedGroup}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.deletedIDs, "unmanaged group must never be deleted, even as an apparent duplicate")
 }
 
 // TestSyncOnce_ConsolidatesDuplicateDevices verifies pre-existing duplicate
