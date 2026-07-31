@@ -34,6 +34,7 @@ const defaultPingTimeout int64 = 48
 type kumaConn interface {
 	GetMonitors(ctx context.Context) ([]kumamonitor.Base, error)
 	CreateMonitor(ctx context.Context, mon kumamonitor.Monitor) (int64, error)
+	UpdateMonitor(ctx context.Context, mon kumamonitor.Monitor) error
 	DeleteMonitor(ctx context.Context, monitorID int64) error
 	GetTags(ctx context.Context) ([]kumatag.Tag, error)
 	CreateTag(ctx context.Context, t kumatag.Tag) (int64, error)
@@ -161,6 +162,26 @@ func (c *Client) CreateMonitor(ctx context.Context, m Monitor) (int, error) {
 
 	c.logger.InfoContext(ctx, "created monitor", "name", m.Name, "id", id)
 	return id, nil
+}
+
+// UpdateMonitor overwrites an existing monitor's configuration (hostname,
+// interval, etc.) to match m. Kuma's update API is a full replace, not a
+// partial patch, so every field fromMonitor sets is reapplied — m.ID must
+// be the ID of the monitor to update. Tags aren't part of this: Kuma
+// manages them as separate associations (see CreateMonitor), untouched by
+// updating the monitor itself.
+func (c *Client) UpdateMonitor(ctx context.Context, m Monitor) error {
+	mon, err := fromMonitor(m)
+	if err != nil {
+		return err
+	}
+
+	if err := c.conn.UpdateMonitor(ctx, mon); err != nil {
+		return fmt.Errorf("updating monitor %q (id %d): %w", m.Name, m.ID, err)
+	}
+
+	c.logger.InfoContext(ctx, "updated monitor", "name", m.Name, "id", m.ID)
+	return nil
 }
 
 // DeleteMonitor removes a monitor by ID.
@@ -314,6 +335,7 @@ func toMonitor(m kumamonitor.Base) Monitor {
 // underlying Socket.IO client expects for creation.
 func fromMonitor(m Monitor) (kumamonitor.Monitor, error) {
 	base := kumamonitor.Base{
+		ID:             int64(m.ID),
 		Name:           m.Name,
 		Interval:       int64(m.Interval),
 		RetryInterval:  int64(m.RetryInterval),
