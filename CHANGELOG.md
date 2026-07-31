@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.1](https://github.com/johntdyer/unifi-kuma/compare/v5.1.0...v5.1.1) (2026-07-31)
+
+
+### Performance Improvements
+
+* cross-compile natively instead of emulating the build per platform ([#37](https://github.com/johntdyer/unifi-kuma/issues/37)) ([942dde3](https://github.com/johntdyer/unifi-kuma/commit/942dde3e28f98749112a4842eab87b446414353d))
+
 ## [5.1.0](https://github.com/johntdyer/unifi-kuma/compare/v5.0.0...v5.1.0) (2026-07-31)
 
 
