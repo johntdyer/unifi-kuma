@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.1.0](https://github.com/johntdyer/unifi-kuma/compare/v5.0.0...v5.1.0) (2026-07-31)
+
+
+### Features
+
+* tag group monitors as managed, and only consolidate our own ([#35](https://github.com/johntdyer/unifi-kuma/issues/35)) ([e598814](https://github.com/johntdyer/unifi-kuma/commit/e598814f9e35a2177c22c9e0ce03d89b30844c0c))
+
 ## [5.0.0](https://github.com/johntdyer/unifi-kuma/compare/v4.2.0...v5.0.0) (2026-07-31)
 
 
