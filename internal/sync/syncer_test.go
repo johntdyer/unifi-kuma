@@ -385,6 +385,212 @@ func TestSyncOnce_NoDuplicateMonitorForRepeatedDevice(t *testing.T) {
 	require.Len(t, devs, 1, "the second identical device entry should be recognized as already synced, not duplicated")
 }
 
+// TestSyncOnce_ConsolidatesDuplicateGroups verifies that when two group
+// monitors share the same name (e.g. from a historical bug or a race
+// between process instances), the lower-ID one is kept as canonical, the
+// higher-ID duplicate and everything parented to it are removed, and the
+// device ends up with exactly one monitor under the surviving group.
+func TestSyncOnce_ConsolidatesDuplicateGroups(t *testing.T) {
+	canonicalGroup := kuma.Monitor{ID: 2595, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
+	duplicateGroup := kuma.Monitor{ID: 2597, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
+	staleUnderDuplicate := kuma.Monitor{
+		ID: 2598, Name: "sonos-one", Type: kuma.MonitorTypePing,
+		Hostname: "10.0.0.50", ParentID: intPtr(2597), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"sonos-speakers": {
+				{GroupName: "sonos-speakers", Name: "sonos-one", Hostname: "10.0.0.50"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{canonicalGroup, duplicateGroup, staleUnderDuplicate}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, k.deletedIDs, 2597, "duplicate group monitor should be removed")
+	assert.Contains(t, k.deletedIDs, 2598, "monitor parented to the duplicate group should be removed")
+
+	devs := k.createdDeviceMonitors()
+	require.Len(t, devs, 1, "device should be recreated exactly once, under the canonical group")
+	require.NotNil(t, devs[0].ParentID)
+	assert.Equal(t, 2595, *devs[0].ParentID)
+}
+
+// TestSyncOnce_ConsolidatesDuplicateGroups_DryRun verifies dry-run mode
+// doesn't actually delete anything while consolidating.
+func TestSyncOnce_ConsolidatesDuplicateGroups_DryRun(t *testing.T) {
+	canonicalGroup := kuma.Monitor{ID: 2595, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
+	duplicateGroup := kuma.Monitor{ID: 2597, Name: "Sonos Speakers", Type: kuma.MonitorTypeGroup, Active: true}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"sonos-speakers": {
+				{GroupName: "sonos-speakers", Name: "sonos-one", Hostname: "10.0.0.50"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{canonicalGroup, duplicateGroup}
+	cfg := defaultCfg()
+	cfg.Sync.DryRun = true
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.deletedIDs)
+}
+
+// TestSyncOnce_ConsolidatesDuplicateDevices verifies pre-existing duplicate
+// monitors for the same device under the same group (garbage left over from
+// before the within-cycle duplicate fix, or a race between process
+// instances) get consolidated down to one, keeping the lowest ID.
+func TestSyncOnce_ConsolidatesDuplicateDevices(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true}
+	canonicalDevice := kuma.Monitor{
+		ID: 2586, Name: "server-proxmox2", Type: kuma.MonitorTypePing,
+		Hostname: "10.222.222.11", ParentID: intPtr(1), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+	duplicateDevice := kuma.Monitor{
+		ID: 2589, Name: "server-proxmox2", Type: kuma.MonitorTypePing,
+		Hostname: "10.222.222.11", ParentID: intPtr(1), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "server-proxmox2", Hostname: "10.222.222.11"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{group, canonicalDevice, duplicateDevice}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, k.deletedIDs, 2589, "the higher-ID duplicate should be removed")
+	assert.NotContains(t, k.deletedIDs, 2586, "the canonical (lowest-ID) monitor should be kept")
+	assert.Empty(t, k.createdDeviceMonitors(), "the surviving monitor already matches, nothing new should be created")
+}
+
+// TestSyncOnce_DoesNotConsolidateUnmanagedDuplicates verifies a monitor a
+// user created by hand is never touched, even if it happens to share a name
+// and parent with a managed one.
+func TestSyncOnce_DoesNotConsolidateUnmanagedDuplicates(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true}
+	managedDevice := kuma.Monitor{
+		ID: 2586, Name: "server-proxmox2", Type: kuma.MonitorTypePing,
+		Hostname: "10.222.222.11", ParentID: intPtr(1), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+	manualDevice := kuma.Monitor{
+		ID: 2589, Name: "server-proxmox2", Type: kuma.MonitorTypePing,
+		Hostname: "10.222.222.11", ParentID: intPtr(1), Active: true,
+		// No managed-by tag: this one was created by hand.
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "server-proxmox2", Hostname: "10.222.222.11"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{group, managedDevice, manualDevice}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.deletedIDs, "unmanaged monitor must never be deleted, even as a duplicate")
+}
+
+// TestSyncOnce_RemovesStaleUngroupedMonitor verifies that once a device
+// gains a real (non-Ungrouped) group, its old monitor under "Ungrouped" —
+// left over from before it had any kuma-group-* membership — is removed,
+// even though SYNC_DELETE_ORPHAN is off (the default).
+func TestSyncOnce_RemovesStaleUngroupedMonitor(t *testing.T) {
+	ungroupedGroup := kuma.Monitor{ID: 1, Name: ungroupedGroupName, Type: kuma.MonitorTypeGroup, Active: true}
+	staleMonitor := kuma.Monitor{
+		ID: 2, Name: "gateway", Type: kuma.MonitorTypePing,
+		Hostname: "192.168.1.1", ParentID: intPtr(1), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{ungroupedGroup, staleMonitor}
+	cfg := defaultCfg()
+	cfg.Sync.DeleteOrphan = false // explicit: this cleanup must not depend on it
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, k.deletedIDs, 2, "stale Ungrouped monitor should be removed")
+	devs := k.createdDeviceMonitors()
+	require.Len(t, devs, 1)
+	assert.Equal(t, "gateway", devs[0].Name)
+}
+
+// TestSyncOnce_NoUngroupedCleanupWithoutStaleMonitor verifies syncing a
+// device into a real group doesn't error or call DeleteMonitor when there's
+// no pre-existing "Ungrouped" group at all.
+func TestSyncOnce_NoUngroupedCleanupWithoutStaleMonitor(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1"},
+			},
+		},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.deletedIDs)
+}
+
+// TestSyncOnce_UngroupedDeviceNotSelfDeleted verifies a device that
+// genuinely lands under "Ungrouped" this cycle doesn't trigger its own
+// cleanup.
+func TestSyncOnce_UngroupedDeviceNotSelfDeleted(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			ungroupedGroupName: {
+				{GroupName: ungroupedGroupName, Name: "loner", Hostname: "192.168.1.9"},
+			},
+		},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.deletedIDs)
+	assert.Contains(t, k.createdGroupNames(), ungroupedGroupName)
+}
+
 func TestSyncOnce_HumanizeGroupNamesDisabled(t *testing.T) {
 	u := &mockUniFi{
 		deviceGroups: map[string][]unifi.MonitorableDevice{
