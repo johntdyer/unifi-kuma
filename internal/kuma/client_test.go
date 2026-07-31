@@ -25,11 +25,13 @@ type fakeConn struct {
 	nextTagID     int64
 
 	createdMonitors []kumamonitor.Monitor
+	updatedMonitors []kumamonitor.Monitor
 	deletedMonitors []int64
 	monitorTags     map[int64][]int64 // monitorID -> tagIDs added, in order
 
 	getMonitorsErr   error
 	createMonitorErr error
+	updateMonitorErr error
 	deleteMonitorErr error
 	getTagsErr       error
 	createTagErr     error
@@ -52,6 +54,14 @@ func (f *fakeConn) CreateMonitor(_ context.Context, mon kumamonitor.Monitor) (in
 	f.createdMonitors = append(f.createdMonitors, mon)
 	f.nextMonitorID++
 	return f.nextMonitorID, nil
+}
+
+func (f *fakeConn) UpdateMonitor(_ context.Context, mon kumamonitor.Monitor) error {
+	if f.updateMonitorErr != nil {
+		return f.updateMonitorErr
+	}
+	f.updatedMonitors = append(f.updatedMonitors, mon)
+	return nil
 }
 
 func (f *fakeConn) DeleteMonitor(_ context.Context, id int64) error {
@@ -270,6 +280,37 @@ func TestCreateMonitor_Error(t *testing.T) {
 	c := newTestClient(conn)
 
 	_, err := c.CreateMonitor(context.Background(), Monitor{Type: MonitorTypePing, Name: "x", Active: true})
+	require.Error(t, err)
+}
+
+func TestUpdateMonitor(t *testing.T) {
+	conn := newFixtureConn(t)
+	c := newTestClient(conn)
+
+	parentID := 1
+	err := c.UpdateMonitor(context.Background(), Monitor{
+		ID:       2,
+		Type:     MonitorTypePing,
+		Name:     "gateway",
+		Hostname: "10.0.0.99", // updated IP
+		ParentID: &parentID,
+		Active:   true,
+	})
+	require.NoError(t, err)
+
+	require.Len(t, conn.updatedMonitors, 1)
+	ping, ok := conn.updatedMonitors[0].(*kumamonitor.Ping)
+	require.True(t, ok, "expected a *monitor.Ping to have been updated")
+	assert.Equal(t, int64(2), ping.ID)
+	assert.Equal(t, "10.0.0.99", ping.Hostname)
+}
+
+func TestUpdateMonitor_Error(t *testing.T) {
+	conn := newFixtureConn(t)
+	conn.updateMonitorErr = errors.New("boom")
+	c := newTestClient(conn)
+
+	err := c.UpdateMonitor(context.Background(), Monitor{ID: 2, Type: MonitorTypePing, Name: "x", Active: true})
 	require.Error(t, err)
 }
 

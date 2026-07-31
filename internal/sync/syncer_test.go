@@ -34,6 +34,7 @@ type mockKuma struct {
 	monitors        []kuma.Monitor
 	monitorsErr     error
 	createdMonitors []kuma.Monitor
+	updatedMonitors []kuma.Monitor
 	deletedIDs      []int
 	nextID          int
 }
@@ -57,6 +58,17 @@ func (m *mockKuma) CreateMonitor(_ context.Context, mon kuma.Monitor) (int, erro
 	m.monitors = append(m.monitors, mon)
 	m.createdMonitors = append(m.createdMonitors, mon)
 	return id, nil
+}
+
+func (m *mockKuma) UpdateMonitor(_ context.Context, mon kuma.Monitor) error {
+	m.updatedMonitors = append(m.updatedMonitors, mon)
+	for i, existing := range m.monitors {
+		if existing.ID == mon.ID {
+			m.monitors[i] = mon
+			break
+		}
+	}
+	return nil
 }
 
 func (m *mockKuma) DeleteMonitor(_ context.Context, id int) error {
@@ -152,7 +164,7 @@ func TestSyncOnce_GroupMonitorHasValidInterval(t *testing.T) {
 	assert.Positive(t, group.Interval, "group monitor must have a positive interval")
 }
 
-func TestSyncOnce_SkipsExistingMonitor(t *testing.T) {
+func TestSyncOnce_ReconcilesExistingMonitor(t *testing.T) {
 	existingGroup := kuma.Monitor{ID: 50, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true}
 	existingMonitor := kuma.Monitor{
 		ID: 51, Name: "gateway", Type: kuma.MonitorTypePing,
@@ -173,9 +185,44 @@ func TestSyncOnce_SkipsExistingMonitor(t *testing.T) {
 	err := s.SyncOnce(context.Background())
 	require.NoError(t, err)
 
-	// Neither group nor monitor should be recreated.
+	// Neither group nor monitor should be recreated — but the existing
+	// monitor is still reconciled (updated in place) even when nothing
+	// actually changed, since there's no cheap way to detect "unchanged".
 	assert.Empty(t, k.createdGroupNames())
 	assert.Empty(t, k.createdDeviceMonitors())
+	require.Len(t, k.updatedMonitors, 1)
+	assert.Equal(t, 51, k.updatedMonitors[0].ID)
+}
+
+// TestSyncOnce_UpdatesHostnameOnDrift verifies that when UniFi reports a new
+// IP for a device that already has a monitor (e.g. after a DHCP lease
+// renewal), the existing monitor's hostname is updated to match rather than
+// staying frozen at whatever it was when first created.
+func TestSyncOnce_UpdatesHostnameOnDrift(t *testing.T) {
+	existingGroup := kuma.Monitor{ID: 50, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true}
+	staleMonitor := kuma.Monitor{
+		ID: 51, Name: "sonos-garage", Type: kuma.MonitorTypePing,
+		Hostname: "10.0.0.5", ParentID: intPtr(50), Active: true,
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "sonos-garage", Hostname: "10.0.0.42"}, // new IP
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{existingGroup, staleMonitor}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, k.updatedMonitors, 1)
+	assert.Equal(t, 51, k.updatedMonitors[0].ID)
+	assert.Equal(t, "10.0.0.42", k.updatedMonitors[0].Hostname)
+	assert.Empty(t, k.createdDeviceMonitors(), "should update the existing monitor, not create a new one")
 }
 
 func TestSyncOnce_DryRun(t *testing.T) {

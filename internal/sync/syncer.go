@@ -28,6 +28,7 @@ type KumaProvider interface {
 	Login(ctx context.Context, username, password string) error
 	GetMonitors(ctx context.Context) ([]kuma.Monitor, error)
 	CreateMonitor(ctx context.Context, m kuma.Monitor) (int, error)
+	UpdateMonitor(ctx context.Context, m kuma.Monitor) error
 	DeleteMonitor(ctx context.Context, id int) error
 }
 
@@ -381,25 +382,39 @@ func (s *Syncer) syncDevice(
 		return nil
 	}
 
+	monitor := kuma.Monitor{
+		Type:          kuma.MonitorTypePing,
+		Name:          device.Name,
+		Hostname:      device.Hostname,
+		Interval:      60,
+		RetryInterval: 60,
+		MaxRetries:    3,
+		ParentID:      &groupID,
+		Active:        true,
+		Description:   fmt.Sprintf("managed by unifi-kuma | mac:%s", device.MAC),
+		Tags:          []kuma.MonitorTag{kuma.ManagedLabel()},
+	}
+
 	if existing := findMonitorInList(*monitors, device.Name, groupID); existing != nil {
-		s.logger.InfoContext(ctx, "monitor already exists, skipping",
+		// Reconcile the existing monitor to the current desired state every
+		// cycle (hostname, interval, etc.) rather than leaving it frozen at
+		// whatever it was set to on creation — otherwise an IP change in
+		// UniFi (DHCP renewal, etc.) would never reach an already-synced
+		// monitor. GetMonitors doesn't return per-type fields like hostname,
+		// so there's no cheap way to check for drift before deciding to
+		// update; this always re-applies the desired config instead.
+		monitor.ID = existing.ID
+		if err := s.kuma.UpdateMonitor(ctx, monitor); err != nil {
+			return fmt.Errorf("updating monitor for %s: %w", device.Name, err)
+		}
+		*existing = monitor
+
+		s.logger.InfoContext(ctx, "reconciled existing monitor",
 			"device", device.Name,
-			"monitor_id", existing.ID,
+			"monitor_id", monitor.ID,
+			"hostname", device.Hostname,
 		)
 	} else {
-		monitor := kuma.Monitor{
-			Type:          kuma.MonitorTypePing,
-			Name:          device.Name,
-			Hostname:      device.Hostname,
-			Interval:      60,
-			RetryInterval: 60,
-			MaxRetries:    3,
-			ParentID:      &groupID,
-			Active:        true,
-			Description:   fmt.Sprintf("managed by unifi-kuma | mac:%s", device.MAC),
-			Tags:          []kuma.MonitorTag{kuma.ManagedLabel()},
-		}
-
 		id, err := s.kuma.CreateMonitor(ctx, monitor)
 		if err != nil {
 			return fmt.Errorf("creating monitor for %s: %w", device.Name, err)
