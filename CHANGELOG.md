@@ -1,5 +1,12 @@
 # Changelog
 
+## [4.1.1](https://github.com/johntdyer/unifi-kuma/compare/v4.1.0...v4.1.1) (2026-07-31)
+
+
+### Bug Fixes
+
+* prevent duplicate monitor creation within a sync cycle ([#29](https://github.com/johntdyer/unifi-kuma/issues/29)) ([c3372b6](https://github.com/johntdyer/unifi-kuma/commit/c3372b60b2222175f4ca15174cb1d918dce557a6))
+
 ## [4.1.0](https://github.com/johntdyer/unifi-kuma/compare/v4.0.2...v4.1.0) (2026-07-31)
 
 
