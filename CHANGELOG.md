@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.1](https://github.com/johntdyer/unifi-kuma/compare/v5.3.0...v5.3.1) (2026-08-01)
+
+
+### Bug Fixes
+
+* match devices and groups by stable ID, not name, to survive renames ([#45](https://github.com/johntdyer/unifi-kuma/issues/45)) ([4382b15](https://github.com/johntdyer/unifi-kuma/commit/4382b1518cd278d9efa2f17aec7f0a82865c518b))
+
 ## [5.3.0](https://github.com/johntdyer/unifi-kuma/compare/v5.2.0...v5.3.0) (2026-07-31)
 
 
