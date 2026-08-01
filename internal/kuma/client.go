@@ -38,6 +38,7 @@ type kumaConn interface {
 	DeleteMonitor(ctx context.Context, monitorID int64) error
 	GetTags(ctx context.Context) ([]kumatag.Tag, error)
 	CreateTag(ctx context.Context, t kumatag.Tag) (int64, error)
+	UpdateTag(ctx context.Context, t kumatag.Tag) error
 	AddMonitorTag(ctx context.Context, tagID, monitorID int64, value string) (*kumatag.MonitorTag, error)
 	Disconnect() error
 }
@@ -298,8 +299,13 @@ func IsManagedMonitor(m Monitor) bool {
 }
 
 // ensureTag returns the ID of an existing tag with the given name, creating
-// it if it does not already exist. Results are cached for the life of the
-// client since the same managed-by tag is looked up on every monitor create.
+// it if it does not already exist. If the tag already exists with a
+// different color than a non-empty desired color, it's updated to match —
+// e.g. so SYNC_OTHER_GROUPS_TAG_COLOR takes effect on a tag that was already
+// created (with no color, or a different one) before the setting was
+// configured. An empty color never overwrites whatever the tag already has.
+// Results are cached for the life of the client since the same tags are
+// looked up on every monitor create.
 func (c *Client) ensureTag(ctx context.Context, name, color string) (int64, error) {
 	c.tagMu.Lock()
 	defer c.tagMu.Unlock()
@@ -315,6 +321,12 @@ func (c *Client) ensureTag(ctx context.Context, name, color string) (int64, erro
 	for _, t := range tags {
 		if t.Name == name {
 			c.tagCache[name] = t.ID
+			if color != "" && t.Color != color {
+				if err := c.conn.UpdateTag(ctx, kumatag.Tag{ID: t.ID, Name: t.Name, Color: color}); err != nil {
+					return 0, fmt.Errorf("updating color for tag %q: %w", name, err)
+				}
+				c.logger.InfoContext(ctx, "updated tag color", "name", name, "id", t.ID, "color", color)
+			}
 			return t.ID, nil
 		}
 	}

@@ -28,6 +28,7 @@ type fakeConn struct {
 	updatedMonitors []kumamonitor.Monitor
 	deletedMonitors []int64
 	monitorTags     map[int64][]int64 // monitorID -> tagIDs added, in order
+	updatedTags     []kumatag.Tag
 
 	getMonitorsErr   error
 	createMonitorErr error
@@ -35,6 +36,7 @@ type fakeConn struct {
 	deleteMonitorErr error
 	getTagsErr       error
 	createTagErr     error
+	updateTagErr     error
 	addMonitorTagErr error
 
 	disconnected bool
@@ -87,6 +89,20 @@ func (f *fakeConn) CreateTag(_ context.Context, t kumatag.Tag) (int64, error) {
 	t.ID = f.nextTagID
 	f.tags = append(f.tags, t)
 	return t.ID, nil
+}
+
+func (f *fakeConn) UpdateTag(_ context.Context, t kumatag.Tag) error {
+	if f.updateTagErr != nil {
+		return f.updateTagErr
+	}
+	f.updatedTags = append(f.updatedTags, t)
+	for i, existing := range f.tags {
+		if existing.ID == t.ID {
+			f.tags[i].Color = t.Color
+			break
+		}
+	}
+	return nil
 }
 
 func (f *fakeConn) AddMonitorTag(_ context.Context, tagID, monitorID int64, value string) (*kumatag.MonitorTag, error) {
@@ -265,6 +281,47 @@ func TestCreateMonitor_ReusesExistingTag(t *testing.T) {
 	// No new tag should have been created — the existing one was reused.
 	assert.Len(t, conn.tags, 1)
 	assert.Equal(t, []int64{42}, conn.monitorTags[10])
+}
+
+// TestCreateMonitor_UpdatesExistingTagColor verifies that when a tag already
+// exists with a different color than requested, its color is reconciled to
+// match — e.g. so SYNC_OTHER_GROUPS_TAG_COLOR takes effect on a tag that was
+// created (with no color, or a different one) before the setting was set.
+func TestCreateMonitor_UpdatesExistingTagColor(t *testing.T) {
+	conn := newFixtureConn(t)
+	conn.tags = []kumatag.Tag{{ID: 42, Name: "apple", Color: "#000000"}}
+	c := newTestClient(conn)
+
+	_, err := c.CreateMonitor(context.Background(), Monitor{
+		Type: MonitorTypePing, Name: "a", Active: true,
+		Tags: []MonitorTag{{Name: "apple", Color: "#7C3AED"}},
+	})
+	require.NoError(t, err)
+
+	// No new tag created — the existing one was reused, but recolored.
+	assert.Len(t, conn.tags, 1)
+	assert.Equal(t, "#7C3AED", conn.tags[0].Color)
+	require.Len(t, conn.updatedTags, 1)
+	assert.Equal(t, int64(42), conn.updatedTags[0].ID)
+	assert.Equal(t, []int64{42}, conn.monitorTags[10])
+}
+
+// TestCreateMonitor_EmptyColorDoesNotOverwriteExistingTag verifies that
+// requesting no specific color (the default when SYNC_OTHER_GROUPS_TAG_COLOR
+// isn't set) never repaints a tag that already has a color, whatever it is.
+func TestCreateMonitor_EmptyColorDoesNotOverwriteExistingTag(t *testing.T) {
+	conn := newFixtureConn(t)
+	conn.tags = []kumatag.Tag{{ID: 42, Name: "apple", Color: "#000000"}}
+	c := newTestClient(conn)
+
+	_, err := c.CreateMonitor(context.Background(), Monitor{
+		Type: MonitorTypePing, Name: "a", Active: true,
+		Tags: []MonitorTag{{Name: "apple"}}, // no color requested
+	})
+	require.NoError(t, err)
+
+	assert.Empty(t, conn.updatedTags)
+	assert.Equal(t, "#000000", conn.tags[0].Color)
 }
 
 func TestCreateMonitor_UnsupportedType(t *testing.T) {
