@@ -890,6 +890,153 @@ func TestFindMonitorInList_DeParentedUnmanaged(t *testing.T) {
 	assert.Nil(t, m)
 }
 
+func TestFindDeviceMonitor_MatchesByMAC(t *testing.T) {
+	monitors := []kuma.Monitor{
+		{
+			ID: 1, Name: "old-name", ParentID: intPtr(10), Type: kuma.MonitorTypePing,
+			Description: deviceDescription("aa:bb:cc:dd:ee:ff"),
+			Tags:        []kuma.MonitorTag{{Name: "unifi-kuma"}},
+		},
+	}
+	device := unifi.MonitorableDevice{Name: "new-name", MAC: "aa:bb:cc:dd:ee:ff"}
+
+	// Wrong parent (99) would defeat name-based matching, but MAC still finds it.
+	m := findDeviceMonitor(monitors, device, 99)
+	require.NotNil(t, m)
+	assert.Equal(t, 1, m.ID)
+}
+
+func TestFindDeviceMonitor_IgnoresUnmanagedMonitor(t *testing.T) {
+	monitors := []kuma.Monitor{
+		{ID: 1, Name: "other", ParentID: intPtr(10), Type: kuma.MonitorTypePing,
+			Description: deviceDescription("aa:bb:cc:dd:ee:ff")}, // no managed-by tag
+	}
+	device := unifi.MonitorableDevice{Name: "new-name", MAC: "aa:bb:cc:dd:ee:ff"}
+
+	m := findDeviceMonitor(monitors, device, 10)
+	assert.Nil(t, m)
+}
+
+func TestFindDeviceMonitor_FallsBackToNameWithoutMAC(t *testing.T) {
+	monitors := []kuma.Monitor{
+		{ID: 1, Name: "router", ParentID: intPtr(10), Type: kuma.MonitorTypePing},
+	}
+	device := unifi.MonitorableDevice{Name: "router"} // no MAC
+
+	m := findDeviceMonitor(monitors, device, 10)
+	require.NotNil(t, m)
+	assert.Equal(t, 1, m.ID)
+}
+
+func TestDescriptionMAC(t *testing.T) {
+	assert.Equal(t, "aa:bb:cc:dd:ee:ff", descriptionMAC(deviceDescription("aa:bb:cc:dd:ee:ff")))
+	assert.Equal(t, "", descriptionMAC("managed by unifi-kuma"))
+	assert.Equal(t, "", descriptionMAC(""))
+}
+
+func TestDescriptionGroupID(t *testing.T) {
+	assert.Equal(t, "grp-123", descriptionGroupID(groupDescription("grp-123")))
+	assert.Equal(t, "", descriptionGroupID(groupDescription("")))
+	assert.Equal(t, "", descriptionGroupID(""))
+}
+
+func TestFindGroupBySourceID(t *testing.T) {
+	monitors := []kuma.Monitor{
+		{
+			ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup,
+			Description: groupDescription("grp-123"),
+			Tags:        []kuma.MonitorTag{{Name: "unifi-kuma"}},
+		},
+	}
+
+	m := findGroupBySourceID(monitors, "grp-123")
+	require.NotNil(t, m)
+	assert.Equal(t, 1, m.ID)
+
+	assert.Nil(t, findGroupBySourceID(monitors, "grp-456"))
+}
+
+// TestSyncOnce_RenamesDeviceMonitorOnUniFiRename verifies that renaming a
+// client/device in UniFi renames its existing Kuma monitor (matched by MAC)
+// instead of creating a new one and leaving the old one orphaned under its
+// stale name.
+func TestSyncOnce_RenamesDeviceMonitorOnUniFiRename(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true}
+	staleMonitor := kuma.Monitor{
+		ID: 2, Name: "old-name", Type: kuma.MonitorTypePing,
+		Hostname: "192.168.1.1", ParentID: intPtr(1), Active: true,
+		Description: deviceDescription("aa:bb:cc:dd:ee:ff"),
+		Tags:        []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "new-name", Hostname: "192.168.1.1", MAC: "aa:bb:cc:dd:ee:ff"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{group, staleMonitor}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.createdDeviceMonitors(), "should update the existing monitor found by MAC, not create a new one")
+	require.Len(t, k.updatedMonitors, 1)
+	assert.Equal(t, 2, k.updatedMonitors[0].ID)
+	assert.Equal(t, "new-name", k.updatedMonitors[0].Name)
+}
+
+// TestSyncOnce_RenamesGroupOnUniFiRename verifies that renaming a
+// "{groupPrefix}-{name}" group in UniFi renames the matching existing Kuma
+// group (matched by the UniFi group's stable ID, embedded in the group
+// monitor's description) instead of creating a new group and leaving the
+// old one — and its devices — orphaned.
+func TestSyncOnce_RenamesGroupOnUniFiRename(t *testing.T) {
+	staleGroup := kuma.Monitor{
+		ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup, Active: true,
+		Description: groupDescription("grp-123"),
+		Tags:        []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+	existingDevice := kuma.Monitor{
+		ID: 2, Name: "gateway", Type: kuma.MonitorTypePing, Hostname: "192.168.1.1",
+		ParentID: intPtr(1), Active: true,
+		Description: deviceDescription("aa:bb:cc:dd:ee:ff"),
+		Tags:        []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"backend": {
+				{
+					GroupName: "backend", Name: "gateway", Hostname: "192.168.1.1",
+					MAC: "aa:bb:cc:dd:ee:ff", SourceGroupID: "grp-123",
+				},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{staleGroup, existingDevice}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Empty(t, k.createdGroupNames(), "should rename the existing group found by source ID, not create a new one")
+
+	var groupUpdate *kuma.Monitor
+	for i := range k.updatedMonitors {
+		if k.updatedMonitors[i].Type == kuma.MonitorTypeGroup {
+			groupUpdate = &k.updatedMonitors[i]
+		}
+	}
+	require.NotNil(t, groupUpdate, "expected the group monitor to be renamed via UpdateMonitor")
+	assert.Equal(t, 1, groupUpdate.ID)
+	assert.Equal(t, "Backend", groupUpdate.Name)
+}
+
 func TestStart_StopsOnContextCancel(t *testing.T) {
 	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
 	k := newMockKuma()

@@ -60,6 +60,11 @@ type MonitorableDevice struct {
 	Name      string
 	Hostname  string // IP or DNS name to monitor
 	MAC       string
+	// SourceGroupID is the stable UniFi ID of the "{groupPrefix}-{name}"
+	// group that produced GroupName, or "" for the synthetic "Ungrouped"
+	// bucket. Lets the syncer recognize the same Kuma group across a rename
+	// in UniFi instead of matching on the (now stale) name alone.
+	SourceGroupID string
 	// OtherGroups lists every other UniFi group this device belongs to,
 	// besides the monitor flag group and any group matching groupPrefix
 	// (those are already represented structurally via GroupName). Sorted

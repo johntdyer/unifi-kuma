@@ -277,6 +277,50 @@ func TestMonitorableDevices_MultipleGroups(t *testing.T) {
 	assert.Len(t, result["iot"], 1)
 }
 
+// TestMonitorableDevices_SourceGroupID verifies each device carries the
+// stable UniFi ID of the prefixed group that placed it in its destination
+// Kuma group, so the syncer can recognize the same group again even if it's
+// later renamed in UniFi.
+func TestMonitorableDevices_SourceGroupID(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyPhone"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+
+	devices := result["servers"]
+	require.Len(t, devices, 1)
+	assert.Equal(t, "g2", devices[0].SourceGroupID)
+}
+
+// TestMonitorableDevices_Ungrouped_NoSourceGroupID verifies a device with no
+// matching prefixed group (landing under "Ungrouped") has no SourceGroupID,
+// since there's no single UniFi group behind that synthetic bucket.
+func TestMonitorableDevices_Ungrouped_NoSourceGroupID(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", IP: "10.0.0.100", Name: "MyPhone"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+
+	devices := result["Ungrouped"]
+	require.Len(t, devices, 1)
+	assert.Equal(t, "", devices[0].SourceGroupID)
+}
+
 // TestMonitorableDevices_OtherGroups verifies that arbitrary UniFi groups
 // (neither the flag group nor a prefixed destination group) are surfaced as
 // OtherGroups, while the flag group and prefixed groups are excluded from

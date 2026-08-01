@@ -121,7 +121,12 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 			desired[displayName][d.Name] = struct{}{}
 		}
 
-		if err := s.syncGroup(ctx, groupName, displayName, devices, groupsByName, &monitors); err != nil {
+		var sourceGroupID string
+		if len(devices) > 0 {
+			sourceGroupID = devices[0].SourceGroupID
+		}
+
+		if err := s.syncGroup(ctx, groupName, displayName, sourceGroupID, devices, groupsByName, &monitors); err != nil {
 			s.logger.ErrorContext(ctx, "failed to sync group",
 				"group", groupName,
 				"error", err,
@@ -151,7 +156,7 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 // snapshot and create a duplicate.
 func (s *Syncer) syncGroup(
 	ctx context.Context,
-	sourceName, displayName string,
+	sourceName, displayName, sourceGroupID string,
 	devices []unifi.MonitorableDevice,
 	groupsByName map[string]int,
 	monitors *[]kuma.Monitor,
@@ -164,7 +169,7 @@ func (s *Syncer) syncGroup(
 	var groupID int
 	if !s.cfg.Sync.DryRun {
 		var err error
-		groupID, err = s.ensureGroup(ctx, displayName, groupsByName, monitors)
+		groupID, err = s.ensureGroup(ctx, displayName, sourceGroupID, groupsByName, monitors)
 		if err != nil {
 			return fmt.Errorf("find/create group %q: %w", displayName, err)
 		}
@@ -327,10 +332,25 @@ func (s *Syncer) consolidateDuplicateDevices(ctx context.Context, monitors *[]ku
 // ensureGroup returns the ID of an existing group or creates one.
 // The groups map is updated in-place so subsequent calls within the same
 // sync cycle do not create duplicates and require no extra API calls.
-func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string]int, monitors *[]kuma.Monitor) (int, error) {
+//
+// A group found by name is still just a name match, which breaks the moment
+// that name changes in UniFi — so sourceGroupID (embedded in the Kuma
+// group's description, see groupDescription) is checked first: a match
+// there identifies the same UniFi group regardless of its current display
+// name, and reconcileGroup renames the Kuma group in place instead of a new
+// one being created here and the old one left behind as an orphan.
+func (s *Syncer) ensureGroup(ctx context.Context, name, sourceGroupID string, groups map[string]int, monitors *[]kuma.Monitor) (int, error) {
+	if sourceGroupID != "" {
+		if existing := findGroupBySourceID(*monitors, sourceGroupID); existing != nil {
+			return s.reconcileGroup(ctx, existing, name, sourceGroupID, groups, monitors)
+		}
+	}
+
 	if id, ok := groups[name]; ok {
 		s.logger.InfoContext(ctx, "found existing group", "name", name, "id", id)
-		s.backfillTags(ctx, id, []kuma.MonitorTag{kuma.ManagedLabel()}, monitors)
+		if existing := findMonitorByIDInList(*monitors, id); existing != nil {
+			return s.reconcileGroup(ctx, existing, name, sourceGroupID, groups, monitors)
+		}
 		return id, nil
 	}
 
@@ -343,6 +363,7 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 		RetryInterval: 60,
 		Active:        true,
 		Tags:          []kuma.MonitorTag{kuma.ManagedLabel()},
+		Description:   groupDescription(sourceGroupID),
 	}
 
 	id, err := s.kuma.CreateMonitor(ctx, group)
@@ -355,6 +376,90 @@ func (s *Syncer) ensureGroup(ctx context.Context, name string, groups map[string
 	*monitors = append(*monitors, group)
 	s.logger.InfoContext(ctx, "created group", "name", name, "id", id)
 	return id, nil
+}
+
+// reconcileGroup brings an already-found group monitor in line with the
+// current desired name and source-group-ID description, renaming it via a
+// single UpdateMonitor call when either has drifted, then backfills the
+// managed-by tag. Used both for a group matched by sourceGroupID (which may
+// need a rename) and one matched by name (which may still need its
+// description backfilled with sourceGroupID for future rename detection).
+func (s *Syncer) reconcileGroup(ctx context.Context, existing *kuma.Monitor, name, sourceGroupID string, groups map[string]int, monitors *[]kuma.Monitor) (int, error) {
+	wantDescription := existing.Description
+	if sourceGroupID != "" {
+		wantDescription = groupDescription(sourceGroupID)
+	}
+
+	if existing.Name != name || existing.Description != wantDescription {
+		updated := *existing
+		updated.Name = name
+		updated.Description = wantDescription
+		if err := s.kuma.UpdateMonitor(ctx, updated); err != nil {
+			return 0, fmt.Errorf("updating group %q (id %d): %w", name, existing.ID, err)
+		}
+		if existing.Name != name {
+			s.logger.InfoContext(ctx, "renamed group to match UniFi",
+				"old_name", existing.Name,
+				"new_name", name,
+				"id", existing.ID,
+			)
+		}
+		existing.Name = name
+		existing.Description = wantDescription
+	}
+
+	groups[name] = existing.ID
+	s.backfillTags(ctx, existing.ID, []kuma.MonitorTag{kuma.ManagedLabel()}, monitors)
+	return existing.ID, nil
+}
+
+// groupDescription formats the description embedded on a managed group
+// monitor, carrying the source UniFi group's stable ID so ensureGroup can
+// find it again even if the group is renamed in UniFi later. Returns the
+// bare managed-by marker for sourceGroupID == "" (the synthetic "Ungrouped"
+// bucket, which has no single UniFi group behind it).
+func groupDescription(sourceGroupID string) string {
+	if sourceGroupID == "" {
+		return "managed by unifi-kuma"
+	}
+	return fmt.Sprintf("managed by unifi-kuma | group-id:%s", sourceGroupID)
+}
+
+// descriptionGroupID extracts the source group ID embedded by
+// groupDescription, or "" if description isn't in that format.
+func descriptionGroupID(description string) string {
+	const marker = "group-id:"
+	idx := strings.Index(description, marker)
+	if idx == -1 {
+		return ""
+	}
+	return strings.TrimSpace(description[idx+len(marker):])
+}
+
+// findGroupBySourceID returns the managed group monitor whose description
+// carries the given source UniFi group ID, or nil if none matches.
+func findGroupBySourceID(monitors []kuma.Monitor, sourceGroupID string) *kuma.Monitor {
+	for i := range monitors {
+		m := &monitors[i]
+		if m.Type != kuma.MonitorTypeGroup || !kuma.IsManagedMonitor(*m) {
+			continue
+		}
+		if descriptionGroupID(m.Description) == sourceGroupID {
+			return m
+		}
+	}
+	return nil
+}
+
+// findMonitorByIDInList returns a pointer to the monitor with the given ID,
+// or nil if not found.
+func findMonitorByIDInList(monitors []kuma.Monitor, id int) *kuma.Monitor {
+	for i := range monitors {
+		if monitors[i].ID == id {
+			return &monitors[i]
+		}
+	}
+	return nil
 }
 
 // backfillTags ensures the monitor found by ID in monitors carries every tag
@@ -466,11 +571,11 @@ func (s *Syncer) syncDevice(
 		MaxRetries:    3,
 		ParentID:      &groupID,
 		Active:        true,
-		Description:   fmt.Sprintf("managed by unifi-kuma | mac:%s", device.MAC),
+		Description:   deviceDescription(device.MAC),
 		Tags:          tags,
 	}
 
-	if existing := findMonitorInList(*monitors, device.Name, groupID); existing != nil {
+	if existing := findDeviceMonitor(*monitors, device, groupID); existing != nil {
 		// Reconcile the existing monitor to the current desired state every
 		// cycle (hostname, interval, etc.) rather than leaving it frozen at
 		// whatever it was set to on creation — otherwise an IP change in
@@ -561,6 +666,48 @@ func removeMonitorByID(monitors []kuma.Monitor, id int) []kuma.Monitor {
 		}
 	}
 	return monitors
+}
+
+// deviceDescription formats the description embedded on a managed device
+// monitor, carrying the device's UniFi MAC address so findDeviceMonitor can
+// find it again even if the device is renamed in UniFi later.
+func deviceDescription(mac string) string {
+	return fmt.Sprintf("managed by unifi-kuma | mac:%s", mac)
+}
+
+// descriptionMAC extracts the MAC address embedded by deviceDescription, or
+// "" if description isn't in that format (e.g. an unmanaged monitor).
+func descriptionMAC(description string) string {
+	const marker = "mac:"
+	idx := strings.Index(description, marker)
+	if idx == -1 {
+		return ""
+	}
+	return strings.TrimSpace(description[idx+len(marker):])
+}
+
+// findDeviceMonitor locates the managed ping monitor for device, preferring
+// a match on its UniFi MAC address (embedded in the monitor's description)
+// over its current name and group. Matching on MAC means a client rename in
+// UniFi updates the existing monitor in place instead of leaving a
+// same-named orphan behind, and as a side effect a device that moves to a
+// different UniFi group is relocated (via the full UpdateMonitor that
+// follows) rather than duplicated under the new one. Falls back to a
+// name+group match for monitors that predate MAC-based descriptions, or
+// when device.MAC is unavailable.
+func findDeviceMonitor(monitors []kuma.Monitor, device unifi.MonitorableDevice, parentID int) *kuma.Monitor {
+	if device.MAC != "" {
+		for i := range monitors {
+			m := &monitors[i]
+			if m.Type != kuma.MonitorTypePing || !kuma.IsManagedMonitor(*m) {
+				continue
+			}
+			if mac := descriptionMAC(m.Description); mac != "" && strings.EqualFold(mac, device.MAC) {
+				return m
+			}
+		}
+	}
+	return findMonitorInList(monitors, device.Name, parentID)
 }
 
 // findMonitorInList returns the first monitor in the list whose name and parent

@@ -188,6 +188,9 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 	// member list (or two prefixed groups resolving to the same name) can't
 	// produce a duplicate Kuma monitor.
 	memberGroups := make(map[string]map[string]struct{})
+	// Index: Kuma-destination group name -> the UniFi group ID that produced
+	// it, so the syncer can recognize the same group again after a rename.
+	groupSourceIDs := make(map[string]string)
 	// Index: member MAC -> names of every other (non-flag, non-prefixed)
 	// UniFi group it belongs to — arbitrary groups reused for unrelated
 	// purposes (firewall rules, VLANs, etc.), exposed as MonitorableDevice
@@ -201,6 +204,7 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 		}
 		if strings.HasPrefix(strings.ToLower(g.Name), strings.ToLower(prefixDash)) {
 			kumaGroupName := g.Name[len(prefixDash):]
+			groupSourceIDs[kumaGroupName] = g.ID
 			for _, mac := range g.Members {
 				key := normalizeMAC(mac)
 				if memberGroups[key] == nil {
@@ -277,11 +281,12 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 
 		for gn := range groupNames {
 			result[gn] = append(result[gn], MonitorableDevice{
-				GroupName:   gn,
-				Name:        name,
-				Hostname:    hostname,
-				MAC:         mac,
-				OtherGroups: otherGroups,
+				GroupName:     gn,
+				Name:          name,
+				Hostname:      hostname,
+				MAC:           mac,
+				SourceGroupID: groupSourceIDs[gn],
+				OtherGroups:   otherGroups,
 			})
 		}
 	}
