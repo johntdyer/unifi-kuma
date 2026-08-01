@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.3.2](https://github.com/johntdyer/unifi-kuma/compare/v5.3.1...v5.3.2) (2026-08-01)
+
+
+### Bug Fixes
+
+* reconcile existing tag colors, not just newly created ones ([#47](https://github.com/johntdyer/unifi-kuma/issues/47)) ([a9ec8f5](https://github.com/johntdyer/unifi-kuma/commit/a9ec8f5bee2db57b7b2864b427ba6ba8a2b581f5))
+
 ## [5.3.1](https://github.com/johntdyer/unifi-kuma/compare/v5.3.0...v5.3.1) (2026-08-01)
 
 
