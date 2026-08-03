@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.4.0](https://github.com/johntdyer/unifi-kuma/compare/v5.3.2...v5.4.0) (2026-08-03)
+
+
+### Features
+
+* add SYNC_CLIENT_TTL_DAYS to auto-clean stale group members ([#50](https://github.com/johntdyer/unifi-kuma/issues/50)) ([796d713](https://github.com/johntdyer/unifi-kuma/commit/796d713c02e34a9c07fcb548ff3f1e89ef58a0d2))
+
 ## [5.3.2](https://github.com/johntdyer/unifi-kuma/compare/v5.3.1...v5.3.2) (2026-08-01)
 
 
