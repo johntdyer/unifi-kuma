@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,6 +53,8 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 300, cfg.Sync.IntervalSecs)
 	assert.False(t, cfg.Sync.DryRun)
 	assert.False(t, cfg.Sync.DeleteOrphan)
+	assert.Equal(t, 0, cfg.Sync.ClientTTLDays)
+	assert.Equal(t, time.Duration(0), cfg.Sync.ClientTTL)
 }
 
 func TestLoad_TagOtherGroupsOverride(t *testing.T) {
@@ -136,6 +139,7 @@ func TestLoad_EnvOverrides(t *testing.T) {
 		"SYNC_DRY_RUN":          "true",
 		"SYNC_DELETE_ORPHAN":    "1",
 		"UNIFI_INSECURE":        "yes",
+		"SYNC_CLIENT_TTL_DAYS":  "45",
 	})
 
 	cfg, err := Load("")
@@ -146,6 +150,8 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	assert.True(t, cfg.Sync.DryRun)
 	assert.True(t, cfg.Sync.DeleteOrphan)
 	assert.True(t, cfg.UniFi.Insecure)
+	assert.Equal(t, 45, cfg.Sync.ClientTTLDays)
+	assert.Equal(t, 45*24*time.Hour, cfg.Sync.ClientTTL)
 }
 
 func TestLoad_MissingRequired(t *testing.T) {
@@ -298,6 +304,7 @@ func clearEnv(t *testing.T) {
 		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_DISABLE_AUTH",
 		"SYNC_INTERVAL_SECONDS", "SYNC_MONITOR_GROUP", "SYNC_GROUP_PREFIX", "SYNC_HUMANIZE_GROUP_NAMES",
 		"SYNC_TAG_OTHER_GROUPS", "SYNC_OTHER_GROUPS_TAG_COLOR", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
+		"SYNC_CLIENT_TTL_DAYS",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")

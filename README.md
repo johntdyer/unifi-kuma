@@ -168,6 +168,7 @@ Validation requires both username and password for UniFi; for Kuma, either both 
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
 | `SYNC_DELETE_ORPHAN` | `false` | Delete monitors with no matching UniFi device |
+| `SYNC_CLIENT_TTL_DAYS` | `0` (disabled) | Skip a group member if its underlying UniFi client hasn't been seen for this many days — see [Troubleshooting](#a-monitor-keeps-coming-back-after-i-delete-it--even-with-sync_delete_orphantrue) |
 
 ### YAML config file
 
@@ -194,6 +195,7 @@ sync:
   interval_seconds: 300
   dry_run: false
   delete_orphan: false
+  # client_ttl_days: 45   # skip group members not seen in this many days (0 = disabled)
 ```
 
 Pass with `-config /path/to/config.yaml`.
@@ -233,6 +235,41 @@ unifi-kuma only reads data from UniFi (groups, devices, clients) — it never ch
 <img src="images/unifi-client.jpg" alt="UniFi client settings panel showing the Groups field with apple, monitor, and kuma-group-media assigned" width="360">
 
 A client assigned to `monitor` + `kuma-group-media` + `apple` this way gets a ping monitor created in Kuma's **Media** group, tagged `unifi-kuma` (and also `apple`, if `SYNC_TAG_OTHER_GROUPS=true`).
+
+---
+
+## Troubleshooting
+
+### A monitor keeps coming back after I delete it — even with `SYNC_DELETE_ORPHAN=true`
+
+**Symptom:** You delete a monitor in Kuma for a device that's long gone (unplugged, dead, replaced), it reappears on the next sync, and the device isn't even visible anywhere in the UniFi Network app's client list or the `monitor` group's member list in the UI.
+
+**Cause:** unifi-kuma decides what to monitor purely from UniFi Group *membership*, not from whether a device is currently reachable (see [How it works](#how-it-works), step 1). UniFi doesn't automatically drop a client's MAC from a group's stored member list just because the client goes offline — and its own UI doesn't reliably render offline/stale members in group-membership screens, even though the membership is still there in the underlying data. So the client can be effectively invisible in the UniFi UI while still being a member of `monitor` (or a `kuma-group-*` group) as far as the API is concerned — which means unifi-kuma still considers it desired and keeps recreating its monitor, no matter how many times you delete it in Kuma or how you've set `SYNC_DELETE_ORPHAN`.
+
+**Fix #1 — let unifi-kuma catch it automatically:** set `SYNC_CLIENT_TTL_DAYS` (or `sync.client_ttl_days` in YAML) to however many days of silence you're comfortable treating as "gone" — e.g. `45`. Any group member that resolves to a UniFi *client* (not an infrastructure device like a switch or AP — those are never skipped, since going offline is exactly what you want a monitor to catch for them) last seen longer ago than that is excluded from the desired set and logged as a warning, instead of getting a monitor created/recreated for it. Combined with `SYNC_DELETE_ORPHAN=true`, this fully closes the loop with no manual UniFi cleanup required — the stale monitor gets removed on the next sync and stays gone. It's off (`0`) by default because "not seen in N days" isn't always "gone" (a device can legitimately be powered off for a while), so pick a threshold that fits how your devices actually behave.
+
+**Fix #2 — remove the device at the source, not in Kuma:** if you'd rather clean it up once and for all instead of relying on a time threshold:
+
+1. In the UniFi Network app, go to **Clients** (or **Client Devices**) and search for the device by name. If it shows up (even as offline), select it and choose **Forget this client** (or unassign it from the `monitor`/`kuma-group-*` groups if you want to keep its history).
+2. If it does **not** show up in the UI at all — which can happen — you have to reach it through the API directly, since there's no UI path to it:
+   - Look up its MAC address. If you don't already know it, you can usually find it in your router's DHCP lease table, or by checking the group's raw member list via `GET https://<controller>/proxy/network/v2/api/site/<site>/network-members-groups` (requires an authenticated session cookie).
+   - Forget the client by MAC:
+     ```bash
+     # 1. Log in and save the session cookie
+     curl -k -c cookies.txt -X POST https://<controller>/api/auth/login \
+       -H 'Content-Type: application/json' \
+       -d '{"username":"<admin-user>","password":"<admin-pass>"}'
+
+     # 2. Forget the client (repeat -d for multiple MACs in one call)
+     curl -k -b cookies.txt -X POST \
+       https://<controller>/proxy/network/api/s/<site>/cmd/stamgr \
+       -H 'Content-Type: application/json' \
+       -d '{"cmd":"forget-sta","macs":["aa:bb:cc:dd:ee:ff"]}'
+     ```
+     This is UniFi's legacy `stamgr` client-management command. It removes the client record (and, as a side effect, its membership in every group) even when the client no longer appears anywhere in the UI.
+3. On the next unifi-kuma sync, the device drops out of the desired set. With `SYNC_DELETE_ORPHAN=true`, its monitor is removed automatically; otherwise, delete it manually in Kuma once — it won't come back.
+
+**Going forward:** when you decommission a monitored device, forget it in UniFi (step 1/2 above) rather than only deleting its Kuma monitor. Deleting the monitor alone treats the symptom, not the cause — the underlying group membership is unifi-kuma's actual source of truth, and it can persist independently of what the UniFi UI shows you.
 
 ---
 

@@ -64,6 +64,7 @@ func (s *Syncer) Start(ctx context.Context) error {
 		"monitor_group", s.cfg.Sync.MonitorGroup,
 		"group_prefix", s.cfg.Sync.GroupPrefix,
 		"dry_run", s.cfg.Sync.DryRun,
+		"client_ttl", s.cfg.Sync.ClientTTL,
 	)
 
 	if err := s.SyncOnce(ctx); err != nil {
