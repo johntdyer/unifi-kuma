@@ -44,6 +44,7 @@ func main() {
 		slog.Error("failed to create UniFi client", "error", err)
 		os.Exit(1)
 	}
+	unifiClient.SetClientTTL(cfg.Sync.ClientTTL)
 
 	kumaClient := kuma.NewClient(cfg.Kuma.URL)
 	if cfg.Kuma.DisableAuth {

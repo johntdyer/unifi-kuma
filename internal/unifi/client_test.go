@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -430,6 +431,89 @@ func TestMonitorableDevices_UnresolvableMember(t *testing.T) {
 	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	assert.Empty(t, result["servers"]) // unresolvable, so nothing added
+}
+
+// TestMonitorableDevices_SkipsStaleClient verifies that a client last seen
+// longer ago than SetClientTTL is excluded, so a decommissioned
+// device stuck in a UniFi group (e.g. because the controller never dropped
+// it and the UI doesn't surface it either) stops being treated as desired.
+func TestMonitorableDevices_SkipsStaleClient(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", LastIP: "10.0.0.100", Name: "GhostDevice", LastSeen: time.Now().Add(-90 * 24 * time.Hour).Unix()},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+	c.SetClientTTL(30 * 24 * time.Hour)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+	assert.Empty(t, result["iot"])
+}
+
+// TestMonitorableDevices_StaleClientDisabledByDefault verifies a
+// long-offline client still resolves normally when SetClientTTL
+// hasn't been called (the zero value disables the check).
+func TestMonitorableDevices_StaleClientDisabledByDefault(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", LastIP: "10.0.0.100", Name: "GhostDevice", LastSeen: time.Now().Add(-365 * 24 * time.Hour).Unix()},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+	require.Len(t, result["iot"], 1)
+	assert.Equal(t, "GhostDevice", result["iot"][0].Name)
+}
+
+// TestMonitorableDevices_RecentClientNotStale verifies a client seen within
+// the staleness window still resolves normally.
+func TestMonitorableDevices_RecentClientNotStale(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", LastIP: "10.0.0.100", Name: "StillAround", LastSeen: time.Now().Add(-1 * time.Hour).Unix()},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+	c.SetClientTTL(30 * 24 * time.Hour)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+	require.Len(t, result["iot"], 1)
+	assert.Equal(t, "StillAround", result["iot"][0].Name)
+}
+
+// TestMonitorableDevices_StaleCheckIgnoresDevices verifies the staleness
+// check only applies to NetworkClients, not infrastructure Devices (which
+// have no LastSeen field and shouldn't be excluded from monitoring just for
+// being offline — that's precisely the state you want a monitor to catch).
+func TestMonitorableDevices_StaleCheckIgnoresDevices(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.devices = []Device{
+		{ID: "d1", MAC: "aa:bb:cc:dd:ee:ff", InformIP: "192.168.1.1", Name: "Switch"},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff"}},
+	}
+	c := ts.client(t)
+	c.SetClientTTL(30 * 24 * time.Hour)
+
+	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+	require.Len(t, result["servers"], 1)
+	assert.Equal(t, "Switch", result["servers"][0].Name)
 }
 
 func TestNormalizeMAC(t *testing.T) {

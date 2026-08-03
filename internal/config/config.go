@@ -53,6 +53,8 @@ type SyncConfig struct {
 	OtherGroupsColor   string        `yaml:"other_groups_tag_color"`
 	DryRun             bool          `yaml:"dry_run"`
 	DeleteOrphan       bool          `yaml:"delete_orphan"`
+	ClientTTLDays      int           `yaml:"client_ttl_days"`
+	ClientTTL          time.Duration `yaml:"-"`
 }
 
 // validOtherGroupsColors lists the accepted values for
@@ -93,6 +95,7 @@ func Load(yamlFile string) (*Config, error) {
 	applyEnv(cfg)
 
 	cfg.Sync.Interval = time.Duration(cfg.Sync.IntervalSecs) * time.Second
+	cfg.Sync.ClientTTL = time.Duration(cfg.Sync.ClientTTLDays) * 24 * time.Hour
 	cfg.Sync.OtherGroupsColor = strings.ToLower(strings.TrimSpace(cfg.Sync.OtherGroupsColor))
 
 	return cfg, cfg.Validate()
@@ -172,6 +175,16 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("SYNC_DELETE_ORPHAN"); v != "" {
 		cfg.Sync.DeleteOrphan = parseBool(v)
+	}
+	if v := os.Getenv("SYNC_CLIENT_TTL_DAYS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			cfg.Sync.ClientTTLDays = n
+		} else {
+			slog.Warn("invalid SYNC_CLIENT_TTL_DAYS value, using default",
+				"value", v,
+				"default_days", cfg.Sync.ClientTTLDays,
+			)
+		}
 	}
 }
 

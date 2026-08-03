@@ -1,6 +1,9 @@
 package unifi
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // loginRequest is sent to the UniFi auth endpoint.
 type loginRequest struct {
@@ -51,6 +54,11 @@ type NetworkClient struct {
 	LastIP   string `json:"last_ip"`
 	Hostname string `json:"hostname"`
 	Name     string `json:"name"`
+	// LastSeen is a Unix timestamp (seconds). UniFi doesn't remove a client
+	// from a group's member list just because it stops connecting, so a
+	// client can sit here indefinitely after being decommissioned — this is
+	// what lets MonitorableDevices detect and skip that case.
+	LastSeen int64 `json:"last_seen"`
 }
 
 // MonitorableDevice combines the Kuma group it should land in with the
@@ -112,4 +120,15 @@ func (c NetworkClient) GetName() string {
 		return c.Hostname
 	}
 	return c.MAC
+}
+
+// Expired reports whether the client hasn't been seen for at least maxAge.
+// maxAge <= 0 disables the check. A zero LastSeen (never reported by the
+// controller) is never considered stale, since it can't be distinguished
+// from a client the controller simply doesn't track history for.
+func (c NetworkClient) Expired(now time.Time, maxAge time.Duration) bool {
+	if maxAge <= 0 || c.LastSeen == 0 {
+		return false
+	}
+	return now.Sub(time.Unix(c.LastSeen, 0)) >= maxAge
 }

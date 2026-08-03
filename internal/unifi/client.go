@@ -25,6 +25,24 @@ type Client struct {
 	csrf    string
 	isUDM   bool
 	logger  *slog.Logger
+	// clientTTL, when non-zero, makes MonitorableDevices skip a
+	// resolved client that hasn't been seen for at least this long — see
+	// SetClientTTL.
+	clientTTL time.Duration
+}
+
+// SetClientTTL configures MonitorableDevices to skip group members
+// that resolve to a NetworkClient (not an infrastructure Device) last seen
+// longer than maxAge ago, instead of resolving them normally. UniFi doesn't
+// drop a client from a group's member list just because it stops connecting
+// — and its own UI doesn't reliably surface such members either — so a
+// decommissioned device can otherwise sit in the monitor group forever,
+// causing its Kuma monitor to be recreated every sync no matter how many
+// times it's deleted. Skipping it here removes it from the desired set, so
+// SYNC_DELETE_ORPHAN (if enabled) cleans up the stale monitor automatically.
+// maxAge <= 0 (the default) disables the check.
+func (c *Client) SetClientTTL(maxAge time.Duration) {
+	c.clientTTL = maxAge
 }
 
 // NewClient creates a new UniFi client. Set insecure=true to skip TLS
@@ -264,6 +282,16 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 			c.logger.WarnContext(ctx, "could not resolve group member",
 				"group", monitorGroup,
 				"mac", mac,
+			)
+			continue
+		}
+
+		if cl, isClient := clientByMAC[key]; isClient && cl.Expired(time.Now(), c.clientTTL) {
+			c.logger.WarnContext(ctx, "skipping stale group member — not seen recently enough to trust as a live monitor target; likely a decommissioned device still listed in a UniFi group. Forget it in UniFi (or remove it from the group) to clear this warning",
+				"group", monitorGroup,
+				"mac", mac,
+				"name", name,
+				"last_seen", time.Unix(cl.LastSeen, 0),
 			)
 			continue
 		}
