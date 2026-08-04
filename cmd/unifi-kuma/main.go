@@ -16,6 +16,7 @@ import (
 	"github.com/johntdyer/unifi-kuma/internal/config"
 	"github.com/johntdyer/unifi-kuma/internal/httpserver"
 	"github.com/johntdyer/unifi-kuma/internal/kuma"
+	"github.com/johntdyer/unifi-kuma/internal/logging"
 	"github.com/johntdyer/unifi-kuma/internal/sync"
 	"github.com/johntdyer/unifi-kuma/internal/unifi"
 )
@@ -26,7 +27,7 @@ func main() {
 	var (
 		cfgFile     = flag.String("config", "", "path to YAML config file (optional, env vars take precedence)")
 		logLevel    = flag.String("log-level", "info", "log level: debug, info, warn, error")
-		logJSON     = flag.Bool("log-json", false, "output logs as JSON")
+		logFormat   = flag.String("log-format", "text", "log output format: text, color, or json")
 		ver         = flag.Bool("version", false, "print version and exit")
 		healthcheck = flag.Bool("healthcheck", false, "check /healthz on the running instance's HTTP server and exit 0/1 accordingly (for use as a Docker HEALTHCHECK against this same binary)")
 	)
@@ -41,7 +42,7 @@ func main() {
 		os.Exit(runHealthcheck(*cfgFile))
 	}
 
-	setupLogger(*logLevel, *logJSON)
+	setupLogger(*logLevel, *logFormat)
 
 	cfg, err := config.Load(*cfgFile)
 	if err != nil {
@@ -163,7 +164,12 @@ func runHealthcheck(cfgFile string) int {
 	return 0
 }
 
-func setupLogger(level string, jsonOutput bool) {
+// setupLogger configures the default slog logger. format selects the
+// handler: "text" (slog.TextHandler, the default), "color" (ANSI-colored,
+// see internal/logging — meant for an interactive terminal), or "json"
+// (slog.JSONHandler, for log aggregators). An unrecognized format falls
+// back to "text" and logs a warning once the logger itself is set up.
+func setupLogger(level, format string) {
 	var lvl slog.Level
 	switch level {
 	case "debug":
@@ -178,10 +184,18 @@ func setupLogger(level string, jsonOutput bool) {
 
 	opts := &slog.HandlerOptions{Level: lvl}
 	var handler slog.Handler
-	if jsonOutput {
+	switch format {
+	case "json":
 		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
+	case "color":
+		handler = logging.NewColorHandler(os.Stdout, opts)
+	case "text", "":
 		handler = slog.NewTextHandler(os.Stdout, opts)
+	default:
+		handler = slog.NewTextHandler(os.Stdout, opts)
+		slog.SetDefault(slog.New(handler))
+		slog.Warn("unknown -log-format value, defaulting to text", "value", format)
+		return
 	}
 
 	slog.SetDefault(slog.New(handler))
