@@ -1,0 +1,13 @@
+.git
+.github
+.env
+.env.*
+*.env
+dist/
+coverage.out
+coverage.html
+images/
+grafana/
+scripts/
+docker-compose*.yml
+*.md

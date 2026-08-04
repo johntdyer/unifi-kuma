@@ -295,6 +295,39 @@ A ready-to-import example dashboard is at [`grafana/unifi-kuma-dashboard.json`](
 
 ---
 
+## Security hardening
+
+The published image is already about as locked-down as a container gets, and it's safe to run with an even more restrictive runtime on top of that:
+
+- **Rootless by default.** The final image is built on `gcr.io/distroless/static-debian12:nonroot` and explicitly sets `USER 65532:65532` — it never runs as root, whether or not you add anything below.
+- **No shell, no package manager.** distroless means there's nothing in the image to `exec` into, `apt install` onto, or otherwise abuse if a container ever got compromised — including no shell for a standard Docker `HEALTHCHECK CMD`, which is why `-healthcheck` (see [Observability](#observability-healthz--metrics)) re-invokes the app's own static binary instead of shelling out to `curl`/`wget`.
+- **Needs zero Linux capabilities.** unifi-kuma never sends an ICMP ping itself — Uptime Kuma does that — so this tool only ever makes outbound HTTPS/WebSocket calls. It's safe to run with `--cap-drop=ALL`.
+- **Never writes to disk.** No local state, cache, or temp files at all, so it's safe to run with `--read-only`.
+
+All four are verified working together — not just claimed — against the built image:
+
+```bash
+docker run -d \
+  --read-only \
+  --cap-drop=ALL \
+  --security-opt=no-new-privileges:true \
+  --user 65532:65532 \
+  -p 9090:9090 \
+  -e UNIFI_URL=https://192.168.1.1 \
+  -e UNIFI_USERNAME=unifi-kuma \
+  -e UNIFI_PASSWORD=changeme \
+  -e KUMA_URL=http://uptime-kuma:3001 \
+  -e KUMA_USERNAME=admin \
+  -e KUMA_PASSWORD=changeme \
+  ghcr.io/johntdyer/unifi-kuma:latest
+```
+
+(`--user 65532:65532` and `--security-opt=no-new-privileges:true` are redundant with what the image already does/needs — included for defense in depth and because some container platforms expect security posture to be declared explicitly at the run/deploy layer, not just inherited from the image.)
+
+`docker-compose.test.yml` applies the same `read_only` / `cap_drop` / `security_opt` block, so it doubles as a copy-pasteable example for a production compose file.
+
+---
+
 ## Setting up Groups in UniFi
 
 1. In **UniFi Network**, go to **Clients** (or **Devices**) → **Groups**.
