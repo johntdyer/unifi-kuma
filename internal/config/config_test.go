@@ -53,8 +53,47 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 300, cfg.Sync.IntervalSecs)
 	assert.False(t, cfg.Sync.DryRun)
 	assert.False(t, cfg.Sync.DeleteOrphan)
-	assert.Equal(t, 0, cfg.Sync.ClientTTLDays)
-	assert.Equal(t, time.Duration(0), cfg.Sync.ClientTTL)
+	assert.Equal(t, 0, cfg.Sync.StaleWarnDays)
+	assert.Equal(t, time.Duration(0), cfg.Sync.StaleWarnAfter)
+	assert.Equal(t, 50, cfg.Sync.MaxOrphanDeletePercent)
+	assert.False(t, cfg.Sync.AllowBulkDelete)
+	assert.Equal(t, ":9090", cfg.HTTP.Addr)
+}
+
+func TestLoad_HTTPAddrOverride(t *testing.T) {
+	setEnv(t, map[string]string{
+		"UNIFI_URL":      "https://unifi.example.com",
+		"UNIFI_USERNAME": "admin",
+		"UNIFI_PASSWORD": "secret",
+		"KUMA_URL":       "http://kuma.example.com:3001",
+		"KUMA_USERNAME":  "kuma",
+		"KUMA_PASSWORD":  "kumasecret",
+		"HTTP_ADDR":      "127.0.0.1:8080",
+	})
+
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.Equal(t, "127.0.0.1:8080", cfg.HTTP.Addr)
+}
+
+// TestLoad_HTTPAddrExplicitlyDisabled verifies that setting HTTP_ADDR to an
+// empty string (as opposed to leaving it unset) disables the HTTP server —
+// this needs LookupEnv rather than a "" != check in applyEnv, since the
+// latter can't distinguish "unset" from "set to empty".
+func TestLoad_HTTPAddrExplicitlyDisabled(t *testing.T) {
+	setEnv(t, map[string]string{
+		"UNIFI_URL":      "https://unifi.example.com",
+		"UNIFI_USERNAME": "admin",
+		"UNIFI_PASSWORD": "secret",
+		"KUMA_URL":       "http://kuma.example.com:3001",
+		"KUMA_USERNAME":  "kuma",
+		"KUMA_PASSWORD":  "kumasecret",
+		"HTTP_ADDR":      "",
+	})
+
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.Equal(t, "", cfg.HTTP.Addr)
 }
 
 func TestLoad_TagOtherGroupsOverride(t *testing.T) {
@@ -128,18 +167,20 @@ func TestLoad_GroupPrefixAndHumanizeOverrides(t *testing.T) {
 
 func TestLoad_EnvOverrides(t *testing.T) {
 	setEnv(t, map[string]string{
-		"UNIFI_URL":             "https://unifi.example.com",
-		"UNIFI_USERNAME":        "admin",
-		"UNIFI_PASSWORD":        "secret",
-		"KUMA_URL":              "http://kuma.example.com:3001",
-		"KUMA_USERNAME":         "kuma",
-		"KUMA_PASSWORD":         "kumasecret",
-		"SYNC_INTERVAL_SECONDS": "60",
-		"SYNC_MONITOR_GROUP":    "watched",
-		"SYNC_DRY_RUN":          "true",
-		"SYNC_DELETE_ORPHAN":    "1",
-		"UNIFI_INSECURE":        "yes",
-		"SYNC_CLIENT_TTL_DAYS":  "45",
+		"UNIFI_URL":                      "https://unifi.example.com",
+		"UNIFI_USERNAME":                 "admin",
+		"UNIFI_PASSWORD":                 "secret",
+		"KUMA_URL":                       "http://kuma.example.com:3001",
+		"KUMA_USERNAME":                  "kuma",
+		"KUMA_PASSWORD":                  "kumasecret",
+		"SYNC_INTERVAL_SECONDS":          "60",
+		"SYNC_MONITOR_GROUP":             "watched",
+		"SYNC_DRY_RUN":                   "true",
+		"SYNC_DELETE_ORPHAN":             "1",
+		"UNIFI_INSECURE":                 "yes",
+		"SYNC_STALE_WARN_DAYS":           "45",
+		"SYNC_MAX_ORPHAN_DELETE_PERCENT": "80",
+		"SYNC_ALLOW_BULK_DELETE":         "true",
 	})
 
 	cfg, err := Load("")
@@ -150,8 +191,28 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	assert.True(t, cfg.Sync.DryRun)
 	assert.True(t, cfg.Sync.DeleteOrphan)
 	assert.True(t, cfg.UniFi.Insecure)
-	assert.Equal(t, 45, cfg.Sync.ClientTTLDays)
-	assert.Equal(t, 45*24*time.Hour, cfg.Sync.ClientTTL)
+	assert.Equal(t, 45, cfg.Sync.StaleWarnDays)
+	assert.Equal(t, 45*24*time.Hour, cfg.Sync.StaleWarnAfter)
+	assert.Equal(t, 80, cfg.Sync.MaxOrphanDeletePercent)
+	assert.True(t, cfg.Sync.AllowBulkDelete)
+}
+
+// TestLoad_MaxOrphanDeletePercentInvalid verifies an out-of-range value
+// falls back to the default instead of disabling the safeguard.
+func TestLoad_MaxOrphanDeletePercentInvalid(t *testing.T) {
+	setEnv(t, map[string]string{
+		"UNIFI_URL":                      "https://unifi.example.com",
+		"UNIFI_USERNAME":                 "admin",
+		"UNIFI_PASSWORD":                 "secret",
+		"KUMA_URL":                       "http://kuma.example.com:3001",
+		"KUMA_USERNAME":                  "kuma",
+		"KUMA_PASSWORD":                  "kumasecret",
+		"SYNC_MAX_ORPHAN_DELETE_PERCENT": "150",
+	})
+
+	cfg, err := Load("")
+	require.NoError(t, err)
+	assert.Equal(t, 50, cfg.Sync.MaxOrphanDeletePercent)
 }
 
 func TestLoad_MissingRequired(t *testing.T) {
@@ -304,7 +365,8 @@ func clearEnv(t *testing.T) {
 		"KUMA_URL", "KUMA_USERNAME", "KUMA_PASSWORD", "KUMA_DISABLE_AUTH",
 		"SYNC_INTERVAL_SECONDS", "SYNC_MONITOR_GROUP", "SYNC_GROUP_PREFIX", "SYNC_HUMANIZE_GROUP_NAMES",
 		"SYNC_TAG_OTHER_GROUPS", "SYNC_OTHER_GROUPS_TAG_COLOR", "SYNC_DRY_RUN", "SYNC_DELETE_ORPHAN",
-		"SYNC_CLIENT_TTL_DAYS",
+		"SYNC_STALE_WARN_DAYS", "SYNC_MAX_ORPHAN_DELETE_PERCENT", "SYNC_ALLOW_BULK_DELETE",
+		"HTTP_ADDR",
 	}
 	for _, k := range keys {
 		t.Setenv(k, "")

@@ -122,11 +122,13 @@ func (c NetworkClient) GetName() string {
 	return c.MAC
 }
 
-// Expired reports whether the client hasn't been seen for at least maxAge.
+// Stale reports whether the client hasn't been seen for at least maxAge.
 // maxAge <= 0 disables the check. A zero LastSeen (never reported by the
 // controller) is never considered stale, since it can't be distinguished
-// from a client the controller simply doesn't track history for.
-func (c NetworkClient) Expired(now time.Time, maxAge time.Duration) bool {
+// from a client the controller simply doesn't track history for. This is a
+// coarse signal only — see the staleWarnAfter doc on Client — never wired
+// to anything that deletes data.
+func (c NetworkClient) Stale(now time.Time, maxAge time.Duration) bool {
 	if maxAge <= 0 || c.LastSeen == 0 {
 		return false
 	}

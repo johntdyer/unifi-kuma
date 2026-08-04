@@ -16,6 +16,7 @@ type Config struct {
 	UniFi UniFiConfig `yaml:"unifi"`
 	Kuma  KumaConfig  `yaml:"kuma"`
 	Sync  SyncConfig  `yaml:"sync"`
+	HTTP  HTTPConfig  `yaml:"http"`
 }
 
 // UniFiConfig holds UniFi controller connection settings. UniFi API keys are
@@ -53,8 +54,25 @@ type SyncConfig struct {
 	OtherGroupsColor   string        `yaml:"other_groups_tag_color"`
 	DryRun             bool          `yaml:"dry_run"`
 	DeleteOrphan       bool          `yaml:"delete_orphan"`
-	ClientTTLDays      int           `yaml:"client_ttl_days"`
-	ClientTTL          time.Duration `yaml:"-"`
+	StaleWarnDays      int           `yaml:"stale_warn_days"`
+	StaleWarnAfter     time.Duration `yaml:"-"`
+	// MaxOrphanDeletePercent caps what fraction of currently-managed device
+	// monitors deleteOrphans is allowed to remove in a single sync cycle,
+	// once there are enough of them for a percentage to be meaningful (see
+	// minMonitorsForOrphanSafeguard in the sync package). This is a
+	// circuit breaker against a misconfiguration or upstream data glitch
+	// (e.g. UniFi briefly not reporting the monitor group, or a login
+	// issue) silently wiping an entire fleet of monitors in one pass.
+	// AllowBulkDelete bypasses it for an intentional mass cleanup.
+	MaxOrphanDeletePercent int  `yaml:"max_orphan_delete_percent"`
+	AllowBulkDelete        bool `yaml:"allow_bulk_delete"`
+}
+
+// HTTPConfig holds settings for the /healthz and /metrics HTTP server.
+type HTTPConfig struct {
+	// Addr is the listen address for /healthz and /metrics, e.g. ":9090".
+	// Empty disables the HTTP server entirely.
+	Addr string `yaml:"addr"`
 }
 
 // validOtherGroupsColors lists the accepted values for
@@ -79,10 +97,14 @@ func Load(yamlFile string) (*Config, error) {
 			Site: "default",
 		},
 		Sync: SyncConfig{
-			IntervalSecs:       300,
-			MonitorGroup:       "monitor",
-			GroupPrefix:        "kuma-group",
-			HumanizeGroupNames: true,
+			IntervalSecs:           300,
+			MonitorGroup:           "monitor",
+			GroupPrefix:            "kuma-group",
+			HumanizeGroupNames:     true,
+			MaxOrphanDeletePercent: 50,
+		},
+		HTTP: HTTPConfig{
+			Addr: ":9090",
 		},
 	}
 
@@ -95,7 +117,7 @@ func Load(yamlFile string) (*Config, error) {
 	applyEnv(cfg)
 
 	cfg.Sync.Interval = time.Duration(cfg.Sync.IntervalSecs) * time.Second
-	cfg.Sync.ClientTTL = time.Duration(cfg.Sync.ClientTTLDays) * 24 * time.Hour
+	cfg.Sync.StaleWarnAfter = time.Duration(cfg.Sync.StaleWarnDays) * 24 * time.Hour
 	cfg.Sync.OtherGroupsColor = strings.ToLower(strings.TrimSpace(cfg.Sync.OtherGroupsColor))
 
 	return cfg, cfg.Validate()
@@ -176,15 +198,32 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("SYNC_DELETE_ORPHAN"); v != "" {
 		cfg.Sync.DeleteOrphan = parseBool(v)
 	}
-	if v := os.Getenv("SYNC_CLIENT_TTL_DAYS"); v != "" {
+	if v := os.Getenv("SYNC_STALE_WARN_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
-			cfg.Sync.ClientTTLDays = n
+			cfg.Sync.StaleWarnDays = n
 		} else {
-			slog.Warn("invalid SYNC_CLIENT_TTL_DAYS value, using default",
+			slog.Warn("invalid SYNC_STALE_WARN_DAYS value, using default",
 				"value", v,
-				"default_days", cfg.Sync.ClientTTLDays,
+				"default_days", cfg.Sync.StaleWarnDays,
 			)
 		}
+	}
+	if v := os.Getenv("SYNC_MAX_ORPHAN_DELETE_PERCENT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 100 {
+			cfg.Sync.MaxOrphanDeletePercent = n
+		} else {
+			slog.Warn("invalid SYNC_MAX_ORPHAN_DELETE_PERCENT value, must be 1-100, using default",
+				"value", v,
+				"default_percent", cfg.Sync.MaxOrphanDeletePercent,
+			)
+		}
+	}
+	if v := os.Getenv("SYNC_ALLOW_BULK_DELETE"); v != "" {
+		cfg.Sync.AllowBulkDelete = parseBool(v)
+	}
+
+	if v, ok := os.LookupEnv("HTTP_ADDR"); ok {
+		cfg.HTTP.Addr = v
 	}
 }
 
