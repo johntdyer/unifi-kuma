@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.6.0](https://github.com/johntdyer/unifi-kuma/compare/v5.5.0...v5.6.0) (2026-08-04)
+
+
+### Features
+
+* add scripts/forget-client.sh and fix the stamgr CSRF docs ([#54](https://github.com/johntdyer/unifi-kuma/issues/54)) ([1408fca](https://github.com/johntdyer/unifi-kuma/commit/1408fca8da60712b89b0c89151f8b894713e0aa1))
+
 ## [5.5.0](https://github.com/johntdyer/unifi-kuma/compare/v5.4.0...v5.5.0) (2026-08-04)
 
 
