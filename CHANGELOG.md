@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.7.0](https://github.com/johntdyer/unifi-kuma/compare/v5.6.0...v5.7.0) (2026-08-04)
+
+
+### Features
+
+* monitor a client's UniFi Fixed IP over its live IP when set ([#56](https://github.com/johntdyer/unifi-kuma/issues/56)) ([5ecc7f7](https://github.com/johntdyer/unifi-kuma/commit/5ecc7f7ae8aa517223086050893478842174bcdd))
+
 ## [5.6.0](https://github.com/johntdyer/unifi-kuma/compare/v5.5.0...v5.6.0) (2026-08-04)
 
 
