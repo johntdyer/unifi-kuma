@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.5.0](https://github.com/johntdyer/unifi-kuma/compare/v5.4.0...v5.5.0) (2026-08-04)
+
+
+### Features
+
+* add /healthz + Prometheus /metrics, and make orphan cleanup safer ([#52](https://github.com/johntdyer/unifi-kuma/issues/52)) ([dc0246b](https://github.com/johntdyer/unifi-kuma/commit/dc0246b404873319292898d9b305e52ebeae37ff))
+
 ## [5.4.0](https://github.com/johntdyer/unifi-kuma/compare/v5.3.2...v5.4.0) (2026-08-03)
 
 
