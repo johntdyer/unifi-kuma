@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.8.0](https://github.com/johntdyer/unifi-kuma/compare/v5.7.0...v5.8.0) (2026-08-04)
+
+
+### Features
+
+* replace -log-json with -log-format text|color|json ([#58](https://github.com/johntdyer/unifi-kuma/issues/58)) ([d8d26eb](https://github.com/johntdyer/unifi-kuma/commit/d8d26eb1ee380374893478ab9750243a39dbdb87))
+
 ## [5.7.0](https://github.com/johntdyer/unifi-kuma/compare/v5.6.0...v5.7.0) (2026-08-04)
 
 
