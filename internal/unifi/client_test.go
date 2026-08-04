@@ -215,6 +215,34 @@ func TestMonitorableDevices_OfflineClient(t *testing.T) {
 	assert.Equal(t, "10.222.222.11", devices[0].Hostname)
 }
 
+// TestMonitorableDevices_PrefersFixedIP verifies that a client with a
+// UniFi "Fixed IP" (DHCP reservation) set resolves to that address rather
+// than its currently-observed live ip — the two can legitimately differ
+// for a multi-homed device (e.g. a box with sub-interfaces on several
+// VLANs), and the fixed IP is the admin's explicit choice of which one to
+// monitor.
+func TestMonitorableDevices_PrefersFixedIP(t *testing.T) {
+	ts := newTestServer(t, true)
+	ts.clients = []NetworkClient{
+		{
+			ID: "c1", MAC: "e4:5f:01:cd:55:f8", Name: "server-pihole",
+			IP: "10.10.100.2", FixedIP: "10.222.222.2", UseFixedIP: true,
+		},
+	}
+	ts.groups = []Group{
+		{ID: "g1", Name: "monitor", Members: []string{"e4:5f:01:cd:55:f8"}},
+		{ID: "g2", Name: "kuma-group-servers", Members: []string{"e4:5f:01:cd:55:f8"}},
+	}
+	c := ts.client(t)
+
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	require.NoError(t, err)
+
+	devices := result["servers"]
+	require.Len(t, devices, 1)
+	assert.Equal(t, "10.222.222.2", devices[0].Hostname, "should monitor the fixed IP, not the live ip")
+}
+
 // TestMonitorableDevices_Ungrouped puts members of the flag group with no
 // matching Kuma-destination group under "Ungrouped".
 func TestMonitorableDevices_Ungrouped(t *testing.T) {
