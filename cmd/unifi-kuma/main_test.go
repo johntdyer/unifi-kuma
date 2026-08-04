@@ -14,6 +14,7 @@ import (
 
 	"github.com/johntdyer/unifi-kuma/internal/config"
 	"github.com/johntdyer/unifi-kuma/internal/kuma"
+	"github.com/johntdyer/unifi-kuma/internal/logging"
 	"github.com/johntdyer/unifi-kuma/internal/sync"
 	"github.com/johntdyer/unifi-kuma/internal/unifi"
 )
@@ -36,7 +37,7 @@ func TestSetupLogger_Levels(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			setupLogger(tt.level, false)
+			setupLogger(tt.level, "text")
 
 			logger := slog.Default()
 			assert.True(t, logger.Enabled(context.Background(), tt.want))
@@ -50,13 +51,29 @@ func TestSetupLogger_Levels(t *testing.T) {
 func TestSetupLogger_HandlerType(t *testing.T) {
 	defer slog.SetDefault(slog.Default())
 
-	setupLogger("info", true)
+	setupLogger("info", "json")
 	_, isJSON := slog.Default().Handler().(*slog.JSONHandler)
-	assert.True(t, isJSON, "expected JSONHandler when jsonOutput is true")
+	assert.True(t, isJSON, "expected JSONHandler for format=json")
 
-	setupLogger("info", false)
+	setupLogger("info", "text")
 	_, isText := slog.Default().Handler().(*slog.TextHandler)
-	assert.True(t, isText, "expected TextHandler when jsonOutput is false")
+	assert.True(t, isText, "expected TextHandler for format=text")
+
+	setupLogger("info", "color")
+	_, isColor := slog.Default().Handler().(*logging.ColorHandler)
+	assert.True(t, isColor, "expected ColorHandler for format=color")
+
+	setupLogger("info", "")
+	_, isTextDefault := slog.Default().Handler().(*slog.TextHandler)
+	assert.True(t, isTextDefault, "expected TextHandler when format is empty")
+}
+
+func TestSetupLogger_UnknownFormatFallsBackToText(t *testing.T) {
+	defer slog.SetDefault(slog.Default())
+
+	setupLogger("info", "xml")
+	_, isText := slog.Default().Handler().(*slog.TextHandler)
+	assert.True(t, isText, "expected TextHandler fallback for an unrecognized format")
 }
 
 // setRequiredEnv sets the env vars config.Load requires to succeed, so

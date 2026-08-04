@@ -234,11 +234,13 @@ unifi-kuma only reads data from UniFi (groups, devices, clients) — it never ch
 ```
 -config string      path to YAML config file
 -log-level string   log level: debug, info, warn, error (default "info")
--log-json           output logs as JSON
+-log-format string  log output format: text, color, or json (default "text")
 -version            print version and exit
 -healthcheck        check /healthz on the running instance and exit 0/1 accordingly, then exit
                      (used internally by the Docker image's HEALTHCHECK — see Observability below)
 ```
+
+`color` is meant for an interactive terminal (`make run`, `docker logs -f` in a real shell) — level and attribute keys are ANSI-colored, everything else matches `text`'s `key=value` shape. `json` is the one to reach for if something's ingesting these logs (Loki, journald, etc.) rather than a human reading them live.
 
 ---
 
