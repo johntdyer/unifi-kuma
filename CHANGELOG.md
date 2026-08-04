@@ -1,5 +1,12 @@
 # Changelog
 
+## [5.8.1](https://github.com/johntdyer/unifi-kuma/compare/v5.8.0...v5.8.1) (2026-08-04)
+
+
+### Bug Fixes
+
+* harden the image and fix a broken race-detector test stage ([#60](https://github.com/johntdyer/unifi-kuma/issues/60)) ([08f9480](https://github.com/johntdyer/unifi-kuma/commit/08f9480afb4fe683cd247c7ea103440e8f465e54))
+
 ## [5.8.0](https://github.com/johntdyer/unifi-kuma/compare/v5.7.0...v5.8.0) (2026-08-04)
 
 
