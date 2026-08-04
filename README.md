@@ -323,20 +323,32 @@ A client assigned to `monitor` + `kuma-group-media` + `apple` this way gets a pi
 1. In the UniFi Network app, go to **Clients** (or **Client Devices**) and search for the device by name. If it shows up (even as offline), select it and choose **Forget this client** (or unassign it from the `monitor`/`kuma-group-*` groups if you want to keep its history).
 2. If it does **not** show up in the UI at all — which can happen — you have to reach it through the API directly, since there's no UI path to it:
    - Look up its MAC address. If you don't already know it, you can usually find it in your router's DHCP lease table, or by checking the group's raw member list via `GET https://<controller>/proxy/network/v2/api/site/<site>/network-members-groups` (requires an authenticated session cookie).
-   - Forget the client by MAC:
+   - Forget the client by MAC — easiest with the included helper script, which handles login, the UniFi OS CSRF dance below, and the classic-controller fallback for you:
      ```bash
-     # 1. Log in and save the session cookie
-     curl -k -c cookies.txt -X POST https://<controller>/api/auth/login \
+     UNIFI_URL=https://<controller> UNIFI_USERNAME=<admin-user> UNIFI_PASSWORD=<admin-pass> \
+       ./scripts/forget-client.sh aa:bb:cc:dd:ee:ff [more-macs...]
+     ```
+     Or by hand, if you'd rather not run the script — **on a UniFi OS (UDM) controller, the login cookie alone isn't enough.** `stamgr` also requires the `X-Csrf-Token` from the login response echoed back as a header on every follow-up request; skip it and you'll get a 401/403 even though the cookie session itself is fine:
+     ```bash
+     # 1. Log in, saving both the session cookie and the response headers
+     curl -sk -c /tmp/unifi-cookies.txt -D /tmp/unifi-headers.txt -X POST \
+       https://<controller>/api/auth/login \
        -H 'Content-Type: application/json' \
        -d '{"username":"<admin-user>","password":"<admin-pass>"}'
 
-     # 2. Forget the client (repeat -d for multiple MACs in one call)
-     curl -k -b cookies.txt -X POST \
+     # 2. Pull the CSRF token out of the login response headers
+     CSRF=$(grep -i '^x-csrf-token:' /tmp/unifi-headers.txt | awk '{print $2}' | tr -d '\r')
+
+     # 3. Forget the client, with that token on the request (repeat MACs in
+     #    the array for more than one)
+     curl -sk -b /tmp/unifi-cookies.txt -H "X-Csrf-Token: ${CSRF}" -X POST \
        https://<controller>/proxy/network/api/s/<site>/cmd/stamgr \
        -H 'Content-Type: application/json' \
        -d '{"cmd":"forget-sta","macs":["aa:bb:cc:dd:ee:ff"]}'
      ```
-     This is UniFi's legacy `stamgr` client-management command. It removes the client record (and, as a side effect, its membership in every group) even when the client no longer appears anywhere in the UI.
+     On a classic (non-UDM) controller, log in against `/api/login` and drop the `/proxy/network` prefix from the `stamgr` URL instead — no CSRF token needed there.
+
+     `forget-sta` is UniFi's legacy client-management command. It removes the client record (and, as a side effect, its membership in every group) even when the client no longer appears anywhere in the UI.
 3. On the next unifi-kuma sync, the device drops out of the desired set. With `SYNC_DELETE_ORPHAN=true`, its monitor is removed automatically; otherwise, delete it manually in Kuma once — it won't come back.
 
 **Going forward:** when you decommission a monitored device, forget it in UniFi (step 1/2 above) rather than only deleting its Kuma monitor. Deleting the monitor alone treats the symptom, not the cause — the underlying group membership is unifi-kuma's actual source of truth, and it can persist independently of what the UniFi UI shows you.

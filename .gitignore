@@ -17,6 +17,7 @@ go.work.sum
 # Environment / secrets
 .env
 .env.local
+cookies.txt
 
 # Editor
 .idea/
