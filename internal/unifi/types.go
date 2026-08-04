@@ -54,6 +54,15 @@ type NetworkClient struct {
 	LastIP   string `json:"last_ip"`
 	Hostname string `json:"hostname"`
 	Name     string `json:"name"`
+	// FixedIP is the DHCP reservation / static-IP override set on the
+	// client's "IP Address" field in the UniFi UI, present when UseFixedIP
+	// is true. For a multi-homed device (multiple VLANs, one MAC), this is
+	// the admin's explicitly declared address for it — distinct from IP,
+	// which just reflects whichever network UniFi currently considers
+	// "primary" for that client, and can legitimately differ from FixedIP
+	// even though both are live and reachable.
+	FixedIP    string `json:"fixed_ip"`
+	UseFixedIP bool   `json:"use_fixedip"`
 	// LastSeen is a Unix timestamp (seconds). UniFi doesn't remove a client
 	// from a group's member list just because it stops connecting, so a
 	// client can sit here indefinitely after being decommissioned — this is
@@ -101,10 +110,16 @@ func (d Device) GetName() string {
 	return d.MAC
 }
 
-// GetIP returns the best available IP for a NetworkClient, preferring the
-// live ip and falling back to the last known address if it isn't currently
-// connected.
+// GetIP returns the best available IP for a NetworkClient. A configured
+// FixedIP (UseFixedIP true) wins first — it's the admin's explicitly
+// declared address for this device, and the only way to pick a specific
+// VLAN's address for a multi-homed client where IP and FixedIP are both
+// live but different. Otherwise, prefers the live ip and falls back to the
+// last known address if it isn't currently connected.
 func (c NetworkClient) GetIP() string {
+	if c.UseFixedIP && c.FixedIP != "" {
+		return c.FixedIP
+	}
 	if c.IP != "" {
 		return c.IP
 	}
