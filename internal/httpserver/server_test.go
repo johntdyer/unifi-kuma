@@ -29,12 +29,21 @@ func newTestHandler(t *testing.T, m *metrics.Metrics, maxAge time.Duration) *htt
 	return ts
 }
 
+// get issues a context-aware GET, since a bare http.Get is disallowed by lint.
+func get(t *testing.T, url string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	require.NoError(t, err)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	return resp
+}
+
 func TestHealthz_NoSyncYet(t *testing.T) {
 	m := metrics.New("dev")
 	ts := newTestHandler(t, m, time.Hour)
 
-	resp, err := http.Get(ts.URL + "/healthz")
-	require.NoError(t, err)
+	resp := get(t, ts.URL+"/healthz")
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
@@ -50,8 +59,7 @@ func TestHealthz_HealthyAfterSuccess(t *testing.T) {
 	m.RecordSync(time.Second, nil)
 	ts := newTestHandler(t, m, time.Hour)
 
-	resp, err := http.Get(ts.URL + "/healthz")
-	require.NoError(t, err)
+	resp := get(t, ts.URL+"/healthz")
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusOK, resp.StatusCode)
@@ -66,8 +74,7 @@ func TestHealthz_UnhealthyAfterFailure(t *testing.T) {
 	m.RecordSync(time.Second, errors.New("boom"))
 	ts := newTestHandler(t, m, time.Hour)
 
-	resp, err := http.Get(ts.URL + "/healthz")
-	require.NoError(t, err)
+	resp := get(t, ts.URL+"/healthz")
 	defer resp.Body.Close()
 
 	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
@@ -79,8 +86,7 @@ func TestMetrics_ExposesCustomAndStandardMetrics(t *testing.T) {
 	m.StaleClients.Set(3)
 	ts := newTestHandler(t, m, time.Hour)
 
-	resp, err := http.Get(ts.URL + "/metrics")
-	require.NoError(t, err)
+	resp := get(t, ts.URL+"/metrics")
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 

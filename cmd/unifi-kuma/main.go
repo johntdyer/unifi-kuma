@@ -140,8 +140,16 @@ func runHealthcheck(cfgFile string) int {
 		return 1
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%s/healthz", port))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fmt.Sprintf("http://127.0.0.1:%s/healthz", port), nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "healthcheck: building request failed: %v\n", err)
+		return 1
+	}
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "healthcheck: request failed: %v\n", err)
 		return 1
