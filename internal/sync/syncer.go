@@ -12,13 +12,14 @@ import (
 
 	"github.com/johntdyer/unifi-kuma/internal/config"
 	"github.com/johntdyer/unifi-kuma/internal/kuma"
+	"github.com/johntdyer/unifi-kuma/internal/metrics"
 	"github.com/johntdyer/unifi-kuma/internal/unifi"
 )
 
 // UniFiProvider is the subset of the UniFi client used by the syncer.
 type UniFiProvider interface {
 	Login(ctx context.Context, username, password string) error
-	MonitorableDevices(ctx context.Context, monitorGroup, groupPrefix string) (map[string][]unifi.MonitorableDevice, error)
+	MonitorableDevices(ctx context.Context, monitorGroup, groupPrefix string) (map[string][]unifi.MonitorableDevice, unifi.ResolutionStats, error)
 }
 
 // KumaProvider is the subset of the Kuma client used by the syncer.
@@ -35,20 +36,32 @@ type KumaProvider interface {
 
 // Syncer reconciles UniFi tags with Uptime Kuma monitors on a schedule.
 type Syncer struct {
-	cfg    *config.Config
-	unifi  UniFiProvider
-	kuma   KumaProvider
-	logger *slog.Logger
+	cfg     *config.Config
+	unifi   UniFiProvider
+	kuma    KumaProvider
+	logger  *slog.Logger
+	metrics *metrics.Metrics
 }
 
-// New creates a Syncer with the given clients and configuration.
+// New creates a Syncer with the given clients and configuration. It always
+// carries its own independently-registered Metrics (see Metrics) — callers
+// that want to expose them (e.g. via an HTTP /metrics endpoint) retrieve
+// them after construction rather than passing one in, so tests and simple
+// callers that don't care about metrics don't need to thread one through.
 func New(cfg *config.Config, u UniFiProvider, k KumaProvider) *Syncer {
 	return &Syncer{
-		cfg:    cfg,
-		unifi:  u,
-		kuma:   k,
-		logger: slog.Default().With("component", "syncer"),
+		cfg:     cfg,
+		unifi:   u,
+		kuma:    k,
+		logger:  slog.Default().With("component", "syncer"),
+		metrics: metrics.New("dev"),
 	}
+}
+
+// Metrics returns this Syncer's Prometheus metrics collector, e.g. to
+// register its Registry against an HTTP /metrics handler.
+func (s *Syncer) Metrics() *metrics.Metrics {
+	return s.metrics
 }
 
 // Start logs in to both APIs and runs the sync loop until ctx is cancelled.
@@ -64,7 +77,7 @@ func (s *Syncer) Start(ctx context.Context) error {
 		"monitor_group", s.cfg.Sync.MonitorGroup,
 		"group_prefix", s.cfg.Sync.GroupPrefix,
 		"dry_run", s.cfg.Sync.DryRun,
-		"client_ttl", s.cfg.Sync.ClientTTL,
+		"stale_warn_after", s.cfg.Sync.StaleWarnAfter,
 	)
 
 	if err := s.SyncOnce(ctx); err != nil {
@@ -90,14 +103,20 @@ func (s *Syncer) Start(ctx context.Context) error {
 // SyncOnce runs a single reconciliation cycle. It fetches all Kuma monitors
 // exactly once and uses in-memory lookups for all subsequent group/monitor
 // checks — no extra API calls per tag or per device.
-func (s *Syncer) SyncOnce(ctx context.Context) error {
+//
+// Metrics are recorded for every exit path via the deferred call, so a
+// dashboard's syncs_total / last_sync_timestamp always reflect reality even
+// when a cycle fails partway through.
+func (s *Syncer) SyncOnce(ctx context.Context) (err error) {
 	s.logger.InfoContext(ctx, "starting sync cycle")
 	start := time.Now()
+	defer func() { s.metrics.RecordSync(time.Since(start), err) }()
 
-	deviceGroups, err := s.unifi.MonitorableDevices(ctx, s.cfg.Sync.MonitorGroup, s.cfg.Sync.GroupPrefix)
+	deviceGroups, stats, err := s.unifi.MonitorableDevices(ctx, s.cfg.Sync.MonitorGroup, s.cfg.Sync.GroupPrefix)
 	if err != nil {
 		return fmt.Errorf("fetching monitorable devices: %w", err)
 	}
+	s.metrics.StaleClients.Set(float64(stats.StaleClients))
 
 	// Fetch all Kuma monitors once; everything else works from this snapshot.
 	monitors, err := s.kuma.GetMonitors(ctx)
@@ -135,8 +154,20 @@ func (s *Syncer) SyncOnce(ctx context.Context) error {
 		}
 	}
 
+	candidates, totalManaged := findOrphanCandidates(monitors, desired)
+	s.metrics.OrphanedMonitors.Set(float64(len(candidates)))
+	s.metrics.ManagedMonitors.Set(float64(totalManaged))
+
+	managedGroups := 0
+	for _, m := range monitors {
+		if m.Type == kuma.MonitorTypeGroup && kuma.IsManagedMonitor(m) {
+			managedGroups++
+		}
+	}
+	s.metrics.ManagedGroups.Set(float64(managedGroups))
+
 	if s.cfg.Sync.DeleteOrphan {
-		if err := s.deleteOrphans(ctx, monitors, desired); err != nil {
+		if err := s.deleteOrphans(ctx, candidates, totalManaged); err != nil {
 			s.logger.ErrorContext(ctx, "failed to delete orphans", "error", err)
 		}
 	}
@@ -605,6 +636,7 @@ func (s *Syncer) syncDevice(
 			"monitor_id", monitor.ID,
 			"hostname", device.Hostname,
 		)
+		s.metrics.MonitorsUpdatedTotal.Inc()
 	} else {
 		id, err := s.kuma.CreateMonitor(ctx, monitor)
 		if err != nil {
@@ -619,6 +651,7 @@ func (s *Syncer) syncDevice(
 			"monitor_id", id,
 			"group", groupName,
 		)
+		s.metrics.MonitorsCreatedTotal.Inc()
 	}
 
 	if groupName != ungroupedGroupName {
@@ -730,10 +763,26 @@ func findMonitorInList(monitors []kuma.Monitor, name string, parentID int) *kuma
 	return nil
 }
 
-// deleteOrphans removes managed monitors that no longer correspond to a
-// tagged device in UniFi. All candidates are processed even if some deletions
-// fail; errors are collected and returned together.
-func (s *Syncer) deleteOrphans(ctx context.Context, monitors []kuma.Monitor, desired map[string]map[string]struct{}) error {
+// minMonitorsForOrphanSafeguard is the smallest managed-monitor count the
+// MaxOrphanDeletePercent circuit breaker applies to. Below this, a
+// percentage is too noisy to be meaningful (deleting 2 of 3 monitors is a
+// perfectly normal cleanup), so small setups always delete freely.
+const minMonitorsForOrphanSafeguard = 4
+
+// orphanCandidate pairs a monitor slated for deletion with the Kuma group
+// name it belongs to, for logging.
+type orphanCandidate struct {
+	monitor   kuma.Monitor
+	groupName string
+}
+
+// findOrphanCandidates returns managed device monitors with no matching
+// entry in desired, plus the total number of currently managed device
+// monitors (the denominator deleteOrphans' safeguard percentage uses).
+// Pure and side-effect-free, so it's safe — and cheap — to call every sync
+// cycle regardless of SYNC_DELETE_ORPHAN, which keeps the orphaned-monitor
+// count available as a metric even when deletion isn't enabled.
+func findOrphanCandidates(monitors []kuma.Monitor, desired map[string]map[string]struct{}) (candidates []orphanCandidate, totalManaged int) {
 	groupByID := make(map[int]string, len(monitors))
 	for _, m := range monitors {
 		if m.Type == kuma.MonitorTypeGroup {
@@ -741,11 +790,11 @@ func (s *Syncer) deleteOrphans(ctx context.Context, monitors []kuma.Monitor, des
 		}
 	}
 
-	var errs []error
 	for _, m := range monitors {
 		if m.Type == kuma.MonitorTypeGroup || !kuma.IsManagedMonitor(m) {
 			continue
 		}
+		totalManaged++
 
 		var parentName string
 		if m.ParentID != nil {
@@ -758,16 +807,56 @@ func (s *Syncer) deleteOrphans(ctx context.Context, monitors []kuma.Monitor, des
 			}
 		}
 
+		candidates = append(candidates, orphanCandidate{monitor: m, groupName: parentName})
+	}
+
+	return candidates, totalManaged
+}
+
+// deleteOrphans removes the given orphan candidates. All of them are
+// processed even if some deletions fail; errors are collected and returned
+// together.
+//
+// Before deleting anything, it checks how large a fraction of currently
+// managed device monitors the candidates represent. A misconfiguration or
+// transient upstream issue (UniFi briefly not reporting the monitor group,
+// a login hiccup) can make the desired set come back far smaller than
+// reality, which would otherwise be indistinguishable from "the fleet
+// actually shrank that much" — and wipe out monitors for devices that are
+// still there. If the candidates exceed SYNC_MAX_ORPHAN_DELETE_PERCENT of
+// the managed total (once there are enough monitors for that to be
+// meaningful), deletion is refused entirely and nothing is removed, unless
+// SYNC_ALLOW_BULK_DELETE opts out of the check for an intentional mass
+// cleanup.
+func (s *Syncer) deleteOrphans(ctx context.Context, candidates []orphanCandidate, totalManaged int) error {
+	if !s.cfg.Sync.AllowBulkDelete && totalManaged >= minMonitorsForOrphanSafeguard {
+		if percent := len(candidates) * 100 / totalManaged; percent > s.cfg.Sync.MaxOrphanDeletePercent {
+			s.metrics.CircuitBreakerTripped.Inc()
+			s.logger.ErrorContext(ctx, "refusing to delete orphaned monitors — would remove more than the configured safety threshold in one cycle, which usually means the desired state is wrong (UniFi API hiccup, login issue) rather than that many devices actually being gone; investigate before retrying, or set SYNC_ALLOW_BULK_DELETE=true if this is an intentional mass cleanup",
+				"candidates", len(candidates),
+				"managed_total", totalManaged,
+				"percent", percent,
+				"max_percent", s.cfg.Sync.MaxOrphanDeletePercent,
+			)
+			return fmt.Errorf("refusing to delete %d of %d managed monitors (%d%% > %d%% safety threshold); set SYNC_ALLOW_BULK_DELETE=true to override",
+				len(candidates), totalManaged, percent, s.cfg.Sync.MaxOrphanDeletePercent)
+		}
+	}
+
+	var errs []error
+	for _, c := range candidates {
 		s.logger.InfoContext(ctx, "deleting orphaned monitor",
-			"name", m.Name,
-			"id", m.ID,
-			"group", parentName,
+			"name", c.monitor.Name,
+			"id", c.monitor.ID,
+			"group", c.groupName,
 		)
 
 		if !s.cfg.Sync.DryRun {
-			if err := s.kuma.DeleteMonitor(ctx, m.ID); err != nil {
-				errs = append(errs, fmt.Errorf("deleting orphan %d (%s): %w", m.ID, m.Name, err))
+			if err := s.kuma.DeleteMonitor(ctx, c.monitor.ID); err != nil {
+				errs = append(errs, fmt.Errorf("deleting orphan %d (%s): %w", c.monitor.ID, c.monitor.Name, err))
+				continue
 			}
+			s.metrics.MonitorsDeletedTotal.Inc()
 		}
 	}
 

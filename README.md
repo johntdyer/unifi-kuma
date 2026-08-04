@@ -37,6 +37,8 @@ UniFi's **Groups** feature (Clients/Devices → Groups in the UI) lets you build
 5. Monitors — both the device ping monitors and the groups themselves — are labelled `unifi-kuma` so they can be tracked for optional orphan deletion and safe duplicate cleanup (see below); anything you create by hand in Kuma is never touched, even if it happens to share a name. This label (and any tags from `SYNC_TAG_OTHER_GROUPS`, below) is also **backfilled** onto monitors and groups that already existed before tagging picked them up — e.g. Kuma monitors created by an older version of unifi-kuma, or a group that was found rather than newly created — so nothing is left permanently untagged just because of when it was first synced.
 6. If a device that was previously **Ungrouped** later gains a matching prefixed group, its stale Ungrouped monitor is removed automatically on the next sync — this always happens, independent of `SYNC_DELETE_ORPHAN`, since it's just cleaning up the same device's own outdated placement.
 7. If Kuma ever ends up with two group monitors sharing the same name, or two managed device monitors for the same device under the same group (from a historical bug, or a race between separate process instances), unifi-kuma treats the lowest-ID one as canonical and automatically removes the duplicate(s) — always, independent of `SYNC_DELETE_ORPHAN`. Unmanaged monitors you created by hand are never touched, even if they happen to share a name.
+8. `SYNC_DELETE_ORPHAN` deletion is protected by a circuit breaker: if the monitors slated for deletion in a single cycle would exceed `SYNC_MAX_ORPHAN_DELETE_PERCENT` (default `50`) of currently managed monitors — and there are enough monitors (4+) for a percentage to be meaningful — unifi-kuma refuses to delete *any* of them that cycle and logs an error instead. This guards against a transient UniFi API issue or a login hiccup making the desired set come back far smaller than reality, which would otherwise look identical to "most of the fleet is actually gone" and wipe out monitors for devices that are still there. Set `SYNC_ALLOW_BULK_DELETE=true` to bypass this for an intentional mass cleanup.
+9. `SYNC_STALE_WARN_DAYS` never deletes anything by itself — it only logs a warning for a group member whose underlying UniFi client hasn't been seen in that many days, as a prompt for you to go check and forget it in UniFi if it's really gone. See [Troubleshooting](#a-monitor-keeps-coming-back-after-i-delete-it--even-with-sync_delete_orphantrue) for why: UniFi's `last_seen` isn't a reliable enough signal to safely automate deletion from.
 
 Optionally, set `SYNC_TAG_OTHER_GROUPS=true` to also tag each device's monitor with the name of every *other* UniFi group it belongs to — beyond the monitor-flag group and any `SYNC_GROUP_PREFIX`-matching group, which already determine tagging/grouping structurally. For example, a client that's a member of `monitor`, `kuma-group-media`, and `apple` ends up with the Kuma tags `unifi-kuma` and `apple` (`kuma-group-media` only affects which Kuma group it lands in — it's not itself a tag, and `monitor` is just the on/off switch). This is off by default since it can add a lot of tags if you use UniFi Groups heavily for other purposes (VLANs, firewall rules, etc.).
 
@@ -73,6 +75,7 @@ Neither UniFi nor Uptime Kuma can be authenticated with an API key for what this
 docker run -d \
   --name unifi-kuma \
   --restart unless-stopped \
+  -p 9090:9090 \
   -e UNIFI_URL=https://192.168.1.1 \
   -e UNIFI_USERNAME=unifi-kuma \
   -e UNIFI_PASSWORD=changeme \
@@ -82,12 +85,15 @@ docker run -d \
   ghcr.io/johntdyer/unifi-kuma:latest
 ```
 
+`-p 9090:9090` exposes [`/healthz` and `/metrics`](#observability-healthz--metrics) — the image already has a Docker `HEALTHCHECK` wired to `/healthz`, so `docker ps` and `docker inspect` reflect real sync health; the port publish is only needed if you want to reach it yourself (e.g. a Prometheus scrape target). Omit it, or set `-e HTTP_ADDR=` (empty) to disable the HTTP server entirely.
+
 If your Kuma instance runs with "Disable Auth" enabled, skip Kuma credentials entirely:
 
 ```bash
 docker run -d \
   --name unifi-kuma \
   --restart unless-stopped \
+  -p 9090:9090 \
   -e UNIFI_URL=https://192.168.1.1 \
   -e UNIFI_USERNAME=unifi-kuma \
   -e UNIFI_PASSWORD=changeme \
@@ -103,6 +109,8 @@ services:
   unifi-kuma:
     image: ghcr.io/johntdyer/unifi-kuma:latest
     restart: unless-stopped
+    ports:
+      - "9090:9090"   # /healthz and /metrics — omit, or set HTTP_ADDR: "" below, to disable
     environment:
       UNIFI_URL: https://192.168.1.1
       UNIFI_USERNAME: unifi-kuma      # see "Creating a read-only UniFi user" below
@@ -120,6 +128,7 @@ services:
       SYNC_INTERVAL_SECONDS: "300"
       SYNC_DRY_RUN: "false"
       SYNC_DELETE_ORPHAN: "false"
+      # HTTP_ADDR: ":9090"                  # /healthz + /metrics listen address (default shown; "" disables)
 ```
 
 ### Build from source
@@ -168,7 +177,10 @@ Validation requires both username and password for UniFi; for Kuma, either both 
 | `SYNC_INTERVAL_SECONDS` | `300` | Seconds between sync cycles |
 | `SYNC_DRY_RUN` | `false` | Log planned actions without applying them |
 | `SYNC_DELETE_ORPHAN` | `false` | Delete monitors with no matching UniFi device |
-| `SYNC_CLIENT_TTL_DAYS` | `0` (disabled) | Skip a group member if its underlying UniFi client hasn't been seen for this many days — see [Troubleshooting](#a-monitor-keeps-coming-back-after-i-delete-it--even-with-sync_delete_orphantrue) |
+| `SYNC_STALE_WARN_DAYS` | `0` (disabled) | Log a warning (never delete) when a group member's underlying UniFi client hasn't been seen for this many days — see [Troubleshooting](#a-monitor-keeps-coming-back-after-i-delete-it--even-with-sync_delete_orphantrue) |
+| `SYNC_MAX_ORPHAN_DELETE_PERCENT` | `50` | Circuit breaker: refuse to delete any orphans in a cycle if the candidates exceed this percent of currently managed monitors (once there are at least 4) — protects against a misconfiguration or transient UniFi issue wiping the fleet |
+| `SYNC_ALLOW_BULK_DELETE` | `false` | Bypass `SYNC_MAX_ORPHAN_DELETE_PERCENT` for an intentional mass cleanup |
+| `HTTP_ADDR` | `:9090` | Listen address for [`/healthz` and `/metrics`](#observability-healthz--metrics). Set to an empty string to disable the HTTP server entirely |
 
 ### YAML config file
 
@@ -195,7 +207,12 @@ sync:
   interval_seconds: 300
   dry_run: false
   delete_orphan: false
-  # client_ttl_days: 45   # skip group members not seen in this many days (0 = disabled)
+  # stale_warn_days: 45   # warn (never delete) about group members not seen in this many days (0 = disabled)
+  # max_orphan_delete_percent: 50  # refuse to bulk-delete beyond this % of managed monitors per cycle
+  # allow_bulk_delete: true        # bypass the above for an intentional mass cleanup
+
+http:
+  addr: ":9090"   # /healthz and /metrics; empty string disables the HTTP server
 ```
 
 Pass with `-config /path/to/config.yaml`.
@@ -219,7 +236,60 @@ unifi-kuma only reads data from UniFi (groups, devices, clients) — it never ch
 -log-level string   log level: debug, info, warn, error (default "info")
 -log-json           output logs as JSON
 -version            print version and exit
+-healthcheck        check /healthz on the running instance and exit 0/1 accordingly, then exit
+                     (used internally by the Docker image's HEALTHCHECK — see Observability below)
 ```
+
+---
+
+## Observability: `/healthz` & `/metrics`
+
+unifi-kuma runs its own HTTP server (default `:9090`, configurable via `HTTP_ADDR`, disable with `HTTP_ADDR=""`) independent of the sync loop, exposing:
+
+- **`/healthz`** — returns `200` once at least one sync cycle has succeeded, and the most recent successful cycle happened within 3× `SYNC_INTERVAL_SECONDS`; otherwise `503`. Body is JSON: `{"ok": true, "detail": "ok"}`. This is what the Docker image's built-in `HEALTHCHECK` polls (see below), and what a Kubernetes `livenessProbe`/`readinessProbe` (`httpGet` against this path) should point at too.
+- **`/metrics`** — Prometheus exposition format. Standard Go runtime and process metrics (`go_*`, `process_*`) are included automatically, alongside:
+
+  | Metric | Type | Meaning |
+  |---|---|---|
+  | `unifi_kuma_build_info{version}` | gauge | Always `1`, labeled with the running version |
+  | `unifi_kuma_syncs_total{result}` | counter | Sync cycles, by `result="success"` or `"error"` |
+  | `unifi_kuma_sync_duration_seconds` | histogram | Duration of each sync cycle |
+  | `unifi_kuma_last_sync_timestamp_seconds` | gauge | Unix time of the most recent sync, any outcome |
+  | `unifi_kuma_last_successful_sync_timestamp_seconds` | gauge | Unix time of the most recent *successful* sync |
+  | `unifi_kuma_managed_monitors` | gauge | Kuma device monitors currently managed by unifi-kuma |
+  | `unifi_kuma_managed_groups` | gauge | Kuma groups currently managed by unifi-kuma |
+  | `unifi_kuma_monitors_created_total` | counter | Device monitors created |
+  | `unifi_kuma_monitors_updated_total` | counter | Existing device monitors reconciled |
+  | `unifi_kuma_monitors_deleted_total` | counter | Orphaned monitors actually deleted |
+  | `unifi_kuma_orphaned_monitors` | gauge | Orphan candidates found in the most recent cycle — set regardless of `SYNC_DELETE_ORPHAN`, so it's visible before you opt into deletion |
+  | `unifi_kuma_stale_clients` | gauge | Clients flagged by `SYNC_STALE_WARN_DAYS` in the most recent cycle — informational, never causes deletion |
+  | `unifi_kuma_orphan_delete_circuit_breaker_tripped_total` | counter | Times the `SYNC_MAX_ORPHAN_DELETE_PERCENT` safeguard refused to delete orphans in a cycle |
+
+### Docker `HEALTHCHECK`
+
+The published image already has a `HEALTHCHECK` baked in (`docker ps` / `docker inspect` will show `healthy`/`unhealthy`) — nothing to configure. It works even though the base image is distroless (no shell, no curl/wget) by invoking the same `unifi-kuma` binary with `-healthcheck`, which just does a plain HTTP GET against its own `/healthz`:
+
+```dockerfile
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/unifi-kuma", "-healthcheck"]
+```
+
+If you set `HTTP_ADDR=""` to disable the HTTP server, `-healthcheck` always exits `0` (nothing to check) rather than reporting the container unhealthy.
+
+### Prometheus scrape config
+
+```yaml
+scrape_configs:
+  - job_name: unifi-kuma
+    static_configs:
+      - targets: ["unifi-kuma:9090"]
+```
+
+### Grafana dashboard
+
+A ready-to-import example dashboard is at [`grafana/unifi-kuma-dashboard.json`](grafana/unifi-kuma-dashboard.json) — managed monitor/group counts, sync success rate and duration, orphan/stale-client gauges, and a circuit-breaker trip counter. In Grafana: **Dashboards → New → Import**, upload the file, and point it at your Prometheus datasource when prompted.
+
+<img src="images/grafana-dashboard.jpg" alt="Grafana dashboard showing unifi-kuma's managed monitor/group counts, sync success rate, sync duration, and sync results over time" width="720">
 
 ---
 
@@ -246,9 +316,9 @@ A client assigned to `monitor` + `kuma-group-media` + `apple` this way gets a pi
 
 **Cause:** unifi-kuma decides what to monitor purely from UniFi Group *membership*, not from whether a device is currently reachable (see [How it works](#how-it-works), step 1). UniFi doesn't automatically drop a client's MAC from a group's stored member list just because the client goes offline — and its own UI doesn't reliably render offline/stale members in group-membership screens, even though the membership is still there in the underlying data. So the client can be effectively invisible in the UniFi UI while still being a member of `monitor` (or a `kuma-group-*` group) as far as the API is concerned — which means unifi-kuma still considers it desired and keeps recreating its monitor, no matter how many times you delete it in Kuma or how you've set `SYNC_DELETE_ORPHAN`.
 
-**Fix #1 — let unifi-kuma catch it automatically:** set `SYNC_CLIENT_TTL_DAYS` (or `sync.client_ttl_days` in YAML) to however many days of silence you're comfortable treating as "gone" — e.g. `45`. Any group member that resolves to a UniFi *client* (not an infrastructure device like a switch or AP — those are never skipped, since going offline is exactly what you want a monitor to catch for them) last seen longer ago than that is excluded from the desired set and logged as a warning, instead of getting a monitor created/recreated for it. Combined with `SYNC_DELETE_ORPHAN=true`, this fully closes the loop with no manual UniFi cleanup required — the stale monitor gets removed on the next sync and stays gone. It's off (`0`) by default because "not seen in N days" isn't always "gone" (a device can legitimately be powered off for a while), so pick a threshold that fits how your devices actually behave.
+**Find candidates — `SYNC_STALE_WARN_DAYS`:** set this (or `sync.stale_warn_days` in YAML) to however many days of silence is worth a second look — e.g. `45`. Any group member that resolves to a UniFi *client* (never an infrastructure device like a switch or AP) last seen longer ago than that gets a warning logged for it. **This is warn-only and intentionally never deletes anything on its own** — an earlier version of this feature did tie it to automatic deletion, and it caused exactly this kind of incident in production: UniFi's `last_seen` is not a heartbeat, it can go days or weeks without updating for a perfectly healthy wired client, so it's informative enough to flag for a human but not trustworthy enough to safely drive an automatic delete. Use the warnings as a worklist, and confirm each one is actually gone (e.g. check it's unreachable) before doing anything about it — don't act on the warning alone.
 
-**Fix #2 — remove the device at the source, not in Kuma:** if you'd rather clean it up once and for all instead of relying on a time threshold:
+**The actual fix — remove the device at the source, not in Kuma:**
 
 1. In the UniFi Network app, go to **Clients** (or **Client Devices**) and search for the device by name. If it shows up (even as offline), select it and choose **Forget this client** (or unassign it from the `monitor`/`kuma-group-*` groups if you want to keep its history).
 2. If it does **not** show up in the UI at all — which can happen — you have to reach it through the API directly, since there's no UI path to it:

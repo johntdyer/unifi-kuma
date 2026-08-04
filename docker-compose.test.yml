@@ -42,6 +42,8 @@ services:
     depends_on:
       uptime-kuma:
         condition: service_healthy
+    ports:
+      - "9090:9090"   # /healthz and /metrics (Prometheus) — http://localhost:9090/metrics
     environment:
       # UniFi controller — required, no sane defaults
       UNIFI_URL:      ${UNIFI_URL:?Set UNIFI_URL in your .env file}

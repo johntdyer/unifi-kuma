@@ -2,9 +2,12 @@ package sync
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -19,14 +22,15 @@ type mockUniFi struct {
 	loginErr     error
 	deviceGroups map[string][]unifi.MonitorableDevice
 	devicesErr   error
+	stats        unifi.ResolutionStats
 }
 
 func (m *mockUniFi) Login(_ context.Context, _, _ string) error {
 	return m.loginErr
 }
 
-func (m *mockUniFi) MonitorableDevices(_ context.Context, _, _ string) (map[string][]unifi.MonitorableDevice, error) {
-	return m.deviceGroups, m.devicesErr
+func (m *mockUniFi) MonitorableDevices(_ context.Context, _, _ string) (map[string][]unifi.MonitorableDevice, unifi.ResolutionStats, error) {
+	return m.deviceGroups, m.stats, m.devicesErr
 }
 
 type mockKuma struct {
@@ -120,12 +124,13 @@ func defaultCfg() *config.Config {
 		UniFi: config.UniFiConfig{Username: "admin", Password: "secret"},
 		Kuma:  config.KumaConfig{Username: "kuma", Password: "kumasecret"},
 		Sync: config.SyncConfig{
-			Interval:           5 * time.Minute,
-			MonitorGroup:       "monitor",
-			GroupPrefix:        "kuma-group",
-			HumanizeGroupNames: true,
-			DryRun:             false,
-			DeleteOrphan:       false,
+			Interval:               5 * time.Minute,
+			MonitorGroup:           "monitor",
+			GroupPrefix:            "kuma-group",
+			HumanizeGroupNames:     true,
+			DryRun:                 false,
+			DeleteOrphan:           false,
+			MaxOrphanDeletePercent: 50,
 		},
 	}
 }
@@ -154,6 +159,150 @@ func TestSyncOnce_CreatesGroupAndMonitor(t *testing.T) {
 	assert.Equal(t, "gateway", devs[0].Name)
 	assert.Equal(t, "192.168.1.1", devs[0].Hostname)
 	assert.Equal(t, kuma.MonitorTypePing, devs[0].Type)
+}
+
+// TestSyncOnce_Metrics_Success verifies a successful cycle that creates a
+// monitor updates the sync-outcome, creation-count, and managed-total
+// metrics.
+func TestSyncOnce_Metrics_Success(t *testing.T) {
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1", MAC: "aa:bb:cc:dd:ee:ff"},
+			},
+		},
+		stats: unifi.ResolutionStats{StaleClients: 2},
+	}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	m := s.Metrics()
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.SyncsTotal.WithLabelValues("success")))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.MonitorsCreatedTotal))
+	assert.Equal(t, float64(0), testutil.ToFloat64(m.MonitorsUpdatedTotal))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.ManagedMonitors))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.ManagedGroups))
+	assert.Equal(t, float64(2), testutil.ToFloat64(m.StaleClients))
+	assert.Equal(t, float64(0), testutil.ToFloat64(m.OrphanedMonitors))
+
+	ok, _ := m.Healthy(0)
+	assert.True(t, ok)
+}
+
+// TestSyncOnce_Metrics_ReconcileIncrementsUpdated verifies that syncing a
+// device with an already-existing monitor increments MonitorsUpdatedTotal,
+// not MonitorsCreatedTotal.
+func TestSyncOnce_Metrics_ReconcileIncrementsUpdated(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup}
+	existing := kuma.Monitor{
+		ID: 2, Name: "gateway", Type: kuma.MonitorTypePing,
+		Hostname: "192.168.1.1", ParentID: intPtr(1), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{
+		deviceGroups: map[string][]unifi.MonitorableDevice{
+			"servers": {
+				{GroupName: "servers", Name: "gateway", Hostname: "192.168.1.1", MAC: "aa:bb:cc:dd:ee:ff"},
+			},
+		},
+	}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{group, existing}
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	m := s.Metrics()
+	assert.Equal(t, float64(0), testutil.ToFloat64(m.MonitorsCreatedTotal))
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.MonitorsUpdatedTotal))
+}
+
+// TestSyncOnce_Metrics_OrphanGaugeSetWithoutDeleteOrphan verifies the
+// orphaned-monitor count is tracked as a metric even when SYNC_DELETE_ORPHAN
+// is off, so it's visible on a dashboard before anyone opts into deletion.
+func TestSyncOnce_Metrics_OrphanGaugeSetWithoutDeleteOrphan(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup}
+	orphan := kuma.Monitor{
+		ID: 2, Name: "old-device", Type: kuma.MonitorTypePing,
+		ParentID: intPtr(1), Active: true,
+		Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+	}
+
+	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
+	k := newMockKuma()
+	k.monitors = []kuma.Monitor{group, orphan}
+
+	cfg := defaultCfg()
+	cfg.Sync.DeleteOrphan = false
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Equal(t, float64(1), testutil.ToFloat64(s.Metrics().OrphanedMonitors))
+	assert.Equal(t, float64(0), testutil.ToFloat64(s.Metrics().MonitorsDeletedTotal), "deletion must not happen while SYNC_DELETE_ORPHAN is off")
+	assert.Empty(t, k.deletedIDs)
+}
+
+// TestSyncOnce_Metrics_DeletedCounterAndCircuitBreaker verifies
+// MonitorsDeletedTotal increments per deletion, and the circuit breaker
+// counter increments (with zero deletions) when it trips.
+func TestSyncOnce_Metrics_DeletedCounterAndCircuitBreaker(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup}
+	monitors := []kuma.Monitor{group}
+	for i := 2; i <= 5; i++ {
+		monitors = append(monitors, kuma.Monitor{
+			ID: i, Name: fmt.Sprintf("device-%d", i), Type: kuma.MonitorTypePing,
+			ParentID: intPtr(1), Active: true,
+			Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+		})
+	}
+
+	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
+	k := newMockKuma()
+	k.monitors = monitors
+
+	cfg := defaultCfg()
+	cfg.Sync.DeleteOrphan = true
+
+	s := New(cfg, u, k)
+	require.NoError(t, s.SyncOnce(context.Background()))
+
+	assert.Equal(t, float64(0), testutil.ToFloat64(s.Metrics().MonitorsDeletedTotal), "safeguard should have blocked deletion")
+	assert.Equal(t, float64(1), testutil.ToFloat64(s.Metrics().CircuitBreakerTripped))
+
+	// Now allow the bulk delete and confirm the deleted counter tracks it.
+	k2 := newMockKuma()
+	k2.monitors = monitors
+	cfg.Sync.AllowBulkDelete = true
+	s2 := New(cfg, u, k2)
+	require.NoError(t, s2.SyncOnce(context.Background()))
+
+	assert.Equal(t, float64(4), testutil.ToFloat64(s2.Metrics().MonitorsDeletedTotal))
+}
+
+// TestSyncOnce_Metrics_Failure verifies a failed fetch records the error
+// outcome and makes Healthy report unhealthy.
+func TestSyncOnce_Metrics_Failure(t *testing.T) {
+	u := &mockUniFi{devicesErr: errors.New("controller unreachable")}
+	k := newMockKuma()
+
+	s := New(defaultCfg(), u, k)
+	err := s.SyncOnce(context.Background())
+	require.Error(t, err)
+
+	m := s.Metrics()
+	assert.Equal(t, float64(1), testutil.ToFloat64(m.SyncsTotal.WithLabelValues("error")))
+	assert.Equal(t, float64(0), testutil.ToFloat64(m.SyncsTotal.WithLabelValues("success")))
+
+	ok, detail := m.Healthy(0)
+	assert.False(t, ok)
+	assert.Contains(t, detail, "controller unreachable")
 }
 
 // TestSyncOnce_GroupMonitorHasValidInterval guards against a real bug: Kuma
@@ -336,6 +485,63 @@ func TestSyncOnce_DeleteOrphans_ContinuesOnError(t *testing.T) {
 
 	// Both orphans should have been attempted.
 	assert.Len(t, k.deletedIDs, 2)
+}
+
+// TestSyncOnce_DeleteOrphans_SafeguardTrips verifies that when the desired
+// set unexpectedly comes back empty (e.g. UniFi briefly not reporting the
+// monitor group) and every managed monitor would be deleted in one cycle,
+// the safeguard refuses to delete anything rather than wiping the fleet.
+func TestSyncOnce_DeleteOrphans_SafeguardTrips(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup}
+	monitors := []kuma.Monitor{group}
+	for i := 2; i <= 5; i++ {
+		monitors = append(monitors, kuma.Monitor{
+			ID: i, Name: fmt.Sprintf("device-%d", i), Type: kuma.MonitorTypePing,
+			ParentID: intPtr(1), Active: true,
+			Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+		})
+	}
+
+	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
+	k := newMockKuma()
+	k.monitors = monitors
+
+	cfg := defaultCfg()
+	cfg.Sync.DeleteOrphan = true
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err) // deleteOrphans' error is logged, not propagated
+
+	assert.Empty(t, k.deletedIDs, "safeguard should have blocked every deletion")
+}
+
+// TestSyncOnce_DeleteOrphans_AllowBulkDeleteOverride verifies
+// SYNC_ALLOW_BULK_DELETE bypasses the safeguard for an intentional cleanup.
+func TestSyncOnce_DeleteOrphans_AllowBulkDeleteOverride(t *testing.T) {
+	group := kuma.Monitor{ID: 1, Name: "Servers", Type: kuma.MonitorTypeGroup}
+	monitors := []kuma.Monitor{group}
+	for i := 2; i <= 5; i++ {
+		monitors = append(monitors, kuma.Monitor{
+			ID: i, Name: fmt.Sprintf("device-%d", i), Type: kuma.MonitorTypePing,
+			ParentID: intPtr(1), Active: true,
+			Tags: []kuma.MonitorTag{{Name: "unifi-kuma"}},
+		})
+	}
+
+	u := &mockUniFi{deviceGroups: map[string][]unifi.MonitorableDevice{}}
+	k := newMockKuma()
+	k.monitors = monitors
+
+	cfg := defaultCfg()
+	cfg.Sync.DeleteOrphan = true
+	cfg.Sync.AllowBulkDelete = true
+
+	s := New(cfg, u, k)
+	err := s.SyncOnce(context.Background())
+	require.NoError(t, err)
+
+	assert.Len(t, k.deletedIDs, 4)
 }
 
 // errorOnFirstDeleteKuma wraps mockKuma to fail on the first DeleteMonitor call.

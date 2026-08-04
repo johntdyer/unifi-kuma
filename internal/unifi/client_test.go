@@ -161,7 +161,7 @@ func TestMonitorableDevices_Devices(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 
@@ -183,7 +183,7 @@ func TestMonitorableDevices_Clients(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["iot"]
@@ -206,7 +206,7 @@ func TestMonitorableDevices_OfflineClient(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["servers"]
@@ -227,7 +227,7 @@ func TestMonitorableDevices_Ungrouped(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["Ungrouped"]
@@ -250,7 +250,7 @@ func TestMonitorableDevices_IgnoresUnprefixedGroups(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result, 1)
 	assert.Empty(t, result["apple"])
@@ -271,7 +271,7 @@ func TestMonitorableDevices_MultipleGroups(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result, 2)
 	assert.Len(t, result["servers"], 1)
@@ -293,7 +293,7 @@ func TestMonitorableDevices_SourceGroupID(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["servers"]
@@ -314,7 +314,7 @@ func TestMonitorableDevices_Ungrouped_NoSourceGroupID(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["Ungrouped"]
@@ -338,7 +338,7 @@ func TestMonitorableDevices_OtherGroups(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["media"]
@@ -360,7 +360,7 @@ func TestMonitorableDevices_OtherGroups_MultipleSorted(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 
 	devices := result["Ungrouped"]
@@ -383,7 +383,7 @@ func TestMonitorableDevices_DedupesFlagGroupMembers(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	assert.Len(t, result["servers"], 1)
 }
@@ -402,7 +402,7 @@ func TestMonitorableDevices_DedupesDestinationGroupMembers(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	assert.Len(t, result["servers"], 1)
 }
@@ -414,7 +414,7 @@ func TestMonitorableDevices_NoFlagGroup(t *testing.T) {
 	ts.groups = []Group{{ID: "1", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff"}}}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	assert.Empty(t, result)
 }
@@ -428,36 +428,44 @@ func TestMonitorableDevices_UnresolvableMember(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	assert.Empty(t, result["servers"]) // unresolvable, so nothing added
 }
 
-// TestMonitorableDevices_SkipsStaleClient verifies that a client last seen
-// longer ago than SetClientTTL is excluded, so a decommissioned
-// device stuck in a UniFi group (e.g. because the controller never dropped
-// it and the UI doesn't surface it either) stops being treated as desired.
-func TestMonitorableDevices_SkipsStaleClient(t *testing.T) {
+// TestMonitorableDevices_StaleClientStillResolves verifies that a client
+// last seen longer ago than SetStaleWarnAfter is still included as a
+// monitorable device — the setting is warn-only, since UniFi's last_seen
+// isn't a reliable enough signal (sparse, event-driven updates rather than
+// a continuous heartbeat, especially for wired clients) to safely drive an
+// automatic deletion from. An earlier version of this behavior did skip the
+// client here, and it caused a production incident where nearly an entire
+// fleet of healthy-but-long-quiet wired clients got treated as gone in one
+// sync cycle.
+func TestMonitorableDevices_StaleClientStillResolves(t *testing.T) {
 	ts := newTestServer(t, true)
 	ts.clients = []NetworkClient{
-		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", LastIP: "10.0.0.100", Name: "GhostDevice", LastSeen: time.Now().Add(-90 * 24 * time.Hour).Unix()},
+		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", LastIP: "10.0.0.100", Name: "QuietDevice", LastSeen: time.Now().Add(-90 * 24 * time.Hour).Unix()},
 	}
 	ts.groups = []Group{
 		{ID: "g1", Name: "monitor", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 		{ID: "g2", Name: "kuma-group-iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 	}
 	c := ts.client(t)
-	c.SetClientTTL(30 * 24 * time.Hour)
+	c.SetStaleWarnAfter(30 * 24 * time.Hour)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, stats, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
-	assert.Empty(t, result["iot"])
+	require.Len(t, result["iot"], 1)
+	assert.Equal(t, "QuietDevice", result["iot"][0].Name)
+	assert.Equal(t, "10.0.0.100", result["iot"][0].Hostname)
+	assert.Equal(t, 1, stats.StaleClients, "stale client should be counted for metrics even though it still resolves")
 }
 
-// TestMonitorableDevices_StaleClientDisabledByDefault verifies a
-// long-offline client still resolves normally when SetClientTTL
-// hasn't been called (the zero value disables the check).
-func TestMonitorableDevices_StaleClientDisabledByDefault(t *testing.T) {
+// TestMonitorableDevices_StaleWarnDisabledByDefault verifies a long-offline
+// client still resolves normally when SetStaleWarnAfter hasn't been called
+// (the zero value disables the check).
+func TestMonitorableDevices_StaleWarnDisabledByDefault(t *testing.T) {
 	ts := newTestServer(t, true)
 	ts.clients = []NetworkClient{
 		{ID: "c1", MAC: "aa:bb:cc:dd:ee:ff", LastIP: "10.0.0.100", Name: "GhostDevice", LastSeen: time.Now().Add(-365 * 24 * time.Hour).Unix()},
@@ -468,7 +476,7 @@ func TestMonitorableDevices_StaleClientDisabledByDefault(t *testing.T) {
 	}
 	c := ts.client(t)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result["iot"], 1)
 	assert.Equal(t, "GhostDevice", result["iot"][0].Name)
@@ -486,9 +494,9 @@ func TestMonitorableDevices_RecentClientNotStale(t *testing.T) {
 		{ID: "g2", Name: "kuma-group-iot", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 	}
 	c := ts.client(t)
-	c.SetClientTTL(30 * 24 * time.Hour)
+	c.SetStaleWarnAfter(30 * 24 * time.Hour)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result["iot"], 1)
 	assert.Equal(t, "StillAround", result["iot"][0].Name)
@@ -508,9 +516,9 @@ func TestMonitorableDevices_StaleCheckIgnoresDevices(t *testing.T) {
 		{ID: "g2", Name: "kuma-group-servers", Members: []string{"aa:bb:cc:dd:ee:ff"}},
 	}
 	c := ts.client(t)
-	c.SetClientTTL(30 * 24 * time.Hour)
+	c.SetStaleWarnAfter(30 * 24 * time.Hour)
 
-	result, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
+	result, _, err := c.MonitorableDevices(context.Background(), "monitor", "kuma-group")
 	require.NoError(t, err)
 	require.Len(t, result["servers"], 1)
 	assert.Equal(t, "Switch", result["servers"][0].Name)

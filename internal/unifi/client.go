@@ -25,24 +25,31 @@ type Client struct {
 	csrf    string
 	isUDM   bool
 	logger  *slog.Logger
-	// clientTTL, when non-zero, makes MonitorableDevices skip a
-	// resolved client that hasn't been seen for at least this long — see
-	// SetClientTTL.
-	clientTTL time.Duration
+	// staleWarnAfter, when non-zero, makes MonitorableDevices log a warning
+	// for a resolved client that hasn't been seen for at least this long —
+	// see SetStaleWarnAfter. It never removes the client from the desired
+	// set: UniFi's last_seen isn't a reliable heartbeat (it can go days or
+	// weeks without updating for a perfectly healthy wired client), so it's
+	// only trustworthy enough to flag for a human to check, not to drive an
+	// automatic deletion off of.
+	staleWarnAfter time.Duration
 }
 
-// SetClientTTL configures MonitorableDevices to skip group members
-// that resolve to a NetworkClient (not an infrastructure Device) last seen
-// longer than maxAge ago, instead of resolving them normally. UniFi doesn't
-// drop a client from a group's member list just because it stops connecting
-// — and its own UI doesn't reliably surface such members either — so a
-// decommissioned device can otherwise sit in the monitor group forever,
-// causing its Kuma monitor to be recreated every sync no matter how many
-// times it's deleted. Skipping it here removes it from the desired set, so
-// SYNC_DELETE_ORPHAN (if enabled) cleans up the stale monitor automatically.
+// SetStaleWarnAfter configures MonitorableDevices to log a warning — never
+// to skip or delete — for a group member that resolves to a NetworkClient
+// (not an infrastructure Device) last seen longer than maxAge ago. This is
+// intentionally warn-only: UniFi doesn't drop a client from a group's
+// member list just because it stops connecting, and its own UI doesn't
+// reliably surface such members either, so a decommissioned device can sit
+// in the monitor group forever — but last_seen is too unreliable a signal
+// (sparse, event-driven updates rather than a continuous heartbeat,
+// especially for wired clients) to safely delete a monitor on. Use the
+// warning as a prompt to forget the client in UniFi yourself; the only
+// things that ever actually remove a monitor are it becoming genuinely
+// unresolvable (the client was forgotten) or a manual delete.
 // maxAge <= 0 (the default) disables the check.
-func (c *Client) SetClientTTL(maxAge time.Duration) {
-	c.clientTTL = maxAge
+func (c *Client) SetStaleWarnAfter(maxAge time.Duration) {
+	c.staleWarnAfter = maxAge
 }
 
 // NewClient creates a new UniFi client. Set insecure=true to skip TLS
@@ -183,6 +190,16 @@ func (c *Client) GetClients(ctx context.Context) ([]NetworkClient, error) {
 	return fetchV1List[NetworkClient](ctx, c, "/rest/user")
 }
 
+// ResolutionStats reports counts observed while resolving monitorable
+// devices, for the caller to expose as metrics.
+type ResolutionStats struct {
+	// StaleClients is the number of group members that resolved to a
+	// NetworkClient last seen longer ago than the configured
+	// SetStaleWarnAfter threshold. Informational only — these clients are
+	// still included in the returned map.
+	StaleClients int
+}
+
 // MonitorableDevices returns a map of Kuma group name → devices to monitor.
 // Membership in the group named monitorGroup marks a device/client as
 // something to monitor. Which Kuma group its monitor lands in is decided
@@ -192,10 +209,12 @@ func (c *Client) GetClients(ctx context.Context) ([]NetworkClient, error) {
 // monitorGroup with no matching group is placed under "Ungrouped". A member
 // of more than one matching group gets an entry — and so a monitor — under
 // each one.
-func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPrefix string) (map[string][]MonitorableDevice, error) {
+func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPrefix string) (map[string][]MonitorableDevice, ResolutionStats, error) {
+	var stats ResolutionStats
+
 	groups, err := c.GetGroups(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetching groups: %w", err)
+		return nil, stats, fmt.Errorf("fetching groups: %w", err)
 	}
 
 	prefixDash := groupPrefix + "-"
@@ -243,17 +262,17 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 
 	if flagGroup == nil {
 		c.logger.WarnContext(ctx, "monitor group not found", "group", monitorGroup)
-		return map[string][]MonitorableDevice{}, nil
+		return map[string][]MonitorableDevice{}, stats, nil
 	}
 
 	devices, err := c.GetDevices(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetching devices: %w", err)
+		return nil, stats, fmt.Errorf("fetching devices: %w", err)
 	}
 
 	clients, err := c.GetClients(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("fetching clients: %w", err)
+		return nil, stats, fmt.Errorf("fetching clients: %w", err)
 	}
 
 	deviceByMAC := make(map[string]Device, len(devices))
@@ -286,14 +305,17 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 			continue
 		}
 
-		if cl, isClient := clientByMAC[key]; isClient && cl.Expired(time.Now(), c.clientTTL) {
-			c.logger.WarnContext(ctx, "skipping stale group member — not seen recently enough to trust as a live monitor target; likely a decommissioned device still listed in a UniFi group. Forget it in UniFi (or remove it from the group) to clear this warning",
+		if cl, isClient := clientByMAC[key]; isClient && cl.Stale(time.Now(), c.staleWarnAfter) {
+			// Warn only — never skip. last_seen isn't reliable enough to
+			// safely drive deletion off of; this is a prompt for a human to
+			// check and forget the client in UniFi if it's really gone.
+			c.logger.WarnContext(ctx, "group member not seen recently — possibly a decommissioned device still listed in a UniFi group; its monitor is being kept (this is a warning, not an automatic action) — forget the client in UniFi if it should stop being monitored",
 				"group", monitorGroup,
 				"mac", mac,
 				"name", name,
 				"last_seen", time.Unix(cl.LastSeen, 0),
 			)
-			continue
+			stats.StaleClients++
 		}
 
 		groupNames := memberGroups[key]
@@ -323,7 +345,7 @@ func (c *Client) MonitorableDevices(ctx context.Context, monitorGroup, groupPref
 		c.logger.InfoContext(ctx, "resolved group members", "group", gn, "count", len(devs))
 	}
 
-	return result, nil
+	return result, stats, nil
 }
 
 // resolveMember finds a device or client matching the given normalized MAC.

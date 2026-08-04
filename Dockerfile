@@ -39,4 +39,14 @@ LABEL org.opencontainers.image.licenses="MIT"
 
 COPY --from=builder /out/unifi-kuma /unifi-kuma
 
+EXPOSE 9090
+
+# The distroless base image has no shell, curl, or wget, so a normal
+# CMD-based HEALTHCHECK can't run one — instead this invokes the app's own
+# binary with -healthcheck, which just does an HTTP GET against its own
+# /healthz and exits 0/1 accordingly. No-op (always exits 0) if HTTP_ADDR
+# has been set to "" to disable the HTTP server entirely.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD ["/unifi-kuma", "-healthcheck"]
+
 ENTRYPOINT ["/unifi-kuma"]
